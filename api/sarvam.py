@@ -8,6 +8,7 @@ error body if anything below is wrong. Model names live in .env.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import logging
@@ -160,3 +161,24 @@ async def extract_journey(text: str, today: dt.date | None = None) -> dict:
     except (KeyError, IndexError, ValueError) as exc:
         raise SarvamError(f"Unexpected chat response shape: {resp.text[:200]!r}") from exc
     return _strip_to_json(content)
+
+
+async def speak(text: str, language_code: str) -> bytes:
+    """Text -> WAV audio (Bulbul). Model and voice are Sarvam's defaults unless configured."""
+    body: dict[str, str] = {"text": text, "target_language_code": language_code}
+    if config.SARVAM_TTS_MODEL:
+        body["model"] = config.SARVAM_TTS_MODEL
+    if config.SARVAM_TTS_SPEAKER:
+        body["speaker"] = config.SARVAM_TTS_SPEAKER
+    started = time.perf_counter()
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{config.SARVAM_BASE_URL}/text-to-speech", headers=_headers(), json=body)
+    except httpx.HTTPError as exc:
+        raise SarvamError(f"Sarvam text-to-speech unreachable: {exc!r}") from exc
+    log.info("tts status=%s ms=%.0f chars=%d", resp.status_code, (time.perf_counter() - started) * 1000, len(text))
+    _raise_for_status(resp, "text-to-speech")
+    try:
+        return base64.b64decode(resp.json()["audios"][0])
+    except (KeyError, IndexError, ValueError, TypeError) as exc:
+        raise SarvamError(f"Unexpected text-to-speech response: {resp.text[:200]!r}") from exc

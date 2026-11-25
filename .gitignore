@@ -11,3 +11,12 @@ dist/
 # Your network's root CA (see deploy/trust-corporate-ca.sh): never commit it
 certs/*
 !certs/.gitkeep
+
+# Local Flagsmith bootstrap output (deploy/flagsmith/bootstrap.py)
+.env.local
+deploy/flagsmith/credentials.txt
+api/flagsmith_env.json
+deploy/experiments/last-run.json
+
+# NudgeBee installer downloaded during setup (run it from the NudgeBee dashboard command; never commit keys)
+installation.sh

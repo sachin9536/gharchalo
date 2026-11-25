@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import models
+import waitlist
 from connections import ItineraryOut, plan as plan_connections
 from fares import CAB_GROUP_SIZES, cab_per_person, cab_total_fare, road_km
 from geo import haversine_km
@@ -44,6 +45,7 @@ class OptionOut(BaseModel):
     seats_available: int
     waitlist: int
     distance_km: float | None = None  # alternatives only: preferred station -> this station
+    confirm_chance: float | None = None  # waitlisted trains only: rule-of-thumb estimate (waitlist.py)
 
 
 class CabShare(BaseModel):
@@ -73,6 +75,78 @@ class SearchResponse(BaseModel):
     # seats ("no_direct") or when the caller asks for them ("requested").
     connections: list[ItineraryOut] = []
     connections_reason: Literal["no_direct", "requested"] | None = None
+    # Flagsmith fields (additive; older clients can ignore them).
+    connections_paused: bool = False  # tatkal_level >= 2 skips the multi-leg planner
+    served_from: Literal["live", "cache"] = "live"  # tatkal_level 3 serves a short-lived cache
+    tatkal_level: int = 0
+    search_id: int | None = None  # logged Experiment B impression; POST /search/{id}/select
+
+
+class DayAvailability(BaseModel):
+    date: dt.date
+    options: int  # direct trains and buses from the preferred station that day
+    with_seats: int
+    trains_with_seats: int
+    buses_with_seats: int
+    cheapest_with_seats: int | None  # INR, simulated estimate
+
+
+class DateStrip(BaseModel):
+    source: Literal["simulated"] = "simulated"
+    origin: StationOut
+    destination: StationOut
+    center: dt.date
+    days: list[DayAvailability]
+
+
+def add_confirm_chances(resp: "SearchResponse", days_until_travel: int | None) -> "SearchResponse":
+    """Attach a waitlist-confirmation estimate to every waitlisted train (buses have no waitlist)."""
+    for option in resp.options:
+        if option.mode == "train" and option.status == "waitlist":
+            option.confirm_chance = waitlist.confirm_chance(option.waitlist, option.travel_class, days_until_travel)
+    return resp
+
+
+def date_strip(session: Session, origin_code: str, dest_code: str, center: dt.date, days: int = 3) -> DateStrip:
+    """Direct availability from the preferred station on the days around `center` (one query)."""
+    stations = {s.code: s for s in session.scalars(select(models.Station))}
+    if origin_code not in stations:
+        raise UnknownStation(f"Unknown origin station {origin_code!r}")
+    if dest_code not in stations:
+        raise UnknownStation(f"Unknown destination station {dest_code!r}")
+    origin, dest = stations[origin_code], stations[dest_code]
+    if origin.city == dest.city:
+        raise SameCity("Origin and destination are in the same city")
+
+    first = center - dt.timedelta(days=days)
+    dates = [first + dt.timedelta(days=i) for i in range(2 * days + 1)]
+    rows = session.scalars(
+        select(models.Service).where(
+            models.Service.origin_code == origin.code,
+            models.Service.dest_code.in_([c for c, s in stations.items() if s.city == dest.city]),
+            models.Service.depart_at >= dt.datetime.combine(dates[0], dt.time.min),
+            models.Service.depart_at < dt.datetime.combine(dates[-1] + dt.timedelta(days=1), dt.time.min),
+        )
+    )
+    by_day: dict[dt.date, list[models.Service]] = {d: [] for d in dates}
+    for svc in rows:
+        by_day[svc.depart_at.date()].append(svc)
+
+    out = []
+    for d in dates:
+        services = by_day[d]
+        free = [s for s in services if s.seats_available > 0]
+        out.append(
+            DayAvailability(
+                date=d,
+                options=len(services),
+                with_seats=len(free),
+                trains_with_seats=sum(s.mode == "train" for s in free),
+                buses_with_seats=sum(s.mode == "bus" for s in free),
+                cheapest_with_seats=min((s.fare for s in free), default=None),
+            )
+        )
+    return DateStrip(origin=_station_out(origin), destination=_station_out(dest), center=center, days=out)
 
 
 def _station_out(s: models.Station) -> StationOut:
@@ -117,6 +191,7 @@ def search(
     date: dt.date,
     max_station_distance_km: int,
     include_connections: bool = False,
+    allow_connections: bool = True,
 ) -> SearchResponse:
     stations = {s.code: s for s in session.scalars(select(models.Station))}
     if origin_code not in stations:
@@ -175,7 +250,9 @@ def search(
 
     # Journeys with changes: only when asked, or when nothing direct has seats.
     reason: Literal["no_direct", "requested"] | None = None
-    if include_connections:
+    if not allow_connections:
+        reason = None  # degraded: the planner is CPU-heavy (tatkal_level >= 2)
+    elif include_connections:
         reason = "requested"
     elif not any(s.seats_available > 0 for s in preferred):
         reason = "no_direct"
@@ -204,4 +281,5 @@ def search(
         cab=_cab_estimate(origin, dest),
         connections=itineraries,
         connections_reason=reason,
+        connections_paused=not allow_connections,
     )

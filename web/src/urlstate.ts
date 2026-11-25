@@ -2,12 +2,15 @@ import type { SearchQuery } from './api'
 
 // A search lives in the URL (?from=SBC&to=HYB&date=2026-11-27) so it can be shared
 // and survives a refresh. Everything read from the URL is validated.
+//
+// Other parameters (notably ?as=demo-5km, which pins the demo identity) are left
+// exactly as they are: only from / to / date / km are ever touched.
 
 const CODE = /^[A-Za-z]{1,8}$/
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
-export const DEFAULT_KM = 15
 
-export type UrlState = { query: SearchQuery | null; km: number }
+/** `km` is the demo override of the station-distance cohort; null = Flagsmith decides. */
+export type UrlState = { query: SearchQuery | null; km: number | null }
 
 export function readUrl(search: string = window.location.search): UrlState {
   const p = new URLSearchParams(search)
@@ -20,17 +23,27 @@ export function readUrl(search: string = window.location.search): UrlState {
       CODE.test(from) && CODE.test(to) && ISO_DATE.test(date) && from.toUpperCase() !== to.toUpperCase()
         ? { origin: from.toUpperCase(), dest: to.toUpperCase(), date }
         : null,
-    km: Number.isInteger(km) && km >= 0 && km <= 30 && p.has('km') ? km : DEFAULT_KM,
+    km: p.has('km') && Number.isInteger(km) && km >= 0 && km <= 30 ? km : null,
   }
 }
 
-export function writeUrl(query: SearchQuery | null, km: number) {
-  const base = window.location.pathname
-  if (!query) {
-    window.history.replaceState(null, '', base)
-    return
+/** The URL search string for a query, keeping every parameter we do not own. */
+export function buildSearch(current: string, query: SearchQuery | null, km: number | null): string {
+  const p = new URLSearchParams(current)
+  for (const key of ['from', 'to', 'date', 'km']) p.delete(key)
+  if (query) {
+    p.set('from', query.origin)
+    p.set('to', query.dest)
+    p.set('date', query.date)
+    if (km !== null) p.set('km', String(km))
   }
-  const p = new URLSearchParams({ from: query.origin, to: query.dest, date: query.date })
-  if (km !== DEFAULT_KM) p.set('km', String(km))
-  window.history.replaceState(null, '', `${base}?${p}`)
+  const text = p.toString()
+  return text ? `?${text}` : ''
+}
+
+export function writeUrl(query: SearchQuery | null, km: number | null) {
+  const next = buildSearch(window.location.search, query, km)
+  if (next !== window.location.search) {
+    window.history.replaceState(null, '', `${window.location.pathname}${next}${window.location.hash}`)
+  }
 }

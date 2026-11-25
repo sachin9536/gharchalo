@@ -1,0 +1,28 @@
+# Extra values for the NudgeBee agent chart, for networks that re-sign HTTPS (e.g. Palo Alto SSL
+# inspection). Without them the runner logs "x509: certificate signed by unknown authority" for
+# relay.nudgebee.com and collector.nudgebee.com and never connects. No secrets in this file.
+#
+#   kubectl -n nudgebee-agent create configmap corp-ca --from-file=corp-ca.pem=certs/corp-ca.pem
+#   helm upgrade nudgebee-agent nudgebee-agent/nudgebee-agent -n nudgebee-agent --reuse-values \
+#     -f deploy/nudgebee/trust-corporate-ca.values.yaml
+#
+# certs/corp-ca.pem comes from deploy/trust-corporate-ca.sh. As the chart documents, SSL_CERT_DIR lists
+# directories and Go reads them all, so the system roots and the corporate CA both stay trusted.
+runner:
+  extraVolumes:
+    - name: corp-ca
+      configMap:
+        name: corp-ca
+  extraVolumeMounts:
+    - name: corp-ca
+      mountPath: /etc/ssl/corp-ca
+      readOnly: true
+  additional_env_vars:  # a list replaces the chart's default, so its three defaults are repeated here
+    - name: CLICKHOUSE_PORT
+      value: "8123"
+    - name: CLICKHOUSE_USER
+      value: default
+    - name: CLICKHOUSE_DB
+      value: default
+    - name: SSL_CERT_DIR
+      value: /etc/ssl/certs:/etc/ssl/corp-ca

@@ -10,8 +10,9 @@ The scripted demo (Bengaluru -> Hyderabad on DEMO_DATE):
   * the only trains with seats leave from alternative stations at ~4, ~11 and
     ~28 km from SBC, so the 5 / 15 / 30 km cohorts are offered 1 / 2 / 3 of them;
   * a bus from SBC has seats (the "any option" fallback);
-  * exactly 3 travellers match on route + date + overlapping 18:00-22:00 window
-    ("exact" strategy); a few more match only with date/time flexibility.
+  * 3 travellers share the evening on the same route and day, but from three different Bengaluru
+    stations, so only one is at the main station: "exact" (your station) finds 1, and the flexible
+    strategy (nearby stations, +/- a day, a wider window) finds 6 with their distance and delay measured.
 """
 
 import datetime as dt
@@ -184,7 +185,7 @@ def _traveller_rows(rng: random.Random, dates: list[dt.date]) -> list[dict]:
 
     t = dt.time
     one_day = dt.timedelta(days=1)
-    # Exact matches for a 18:00-22:00 request on the demo date (different pickup stations).
+    # The same evening on the demo date from three different stations: only u001 is at SBC (exact fit).
     add("SBC", "HYB", DEMO_DATE, t(17), t(21))
     add("YPR", "KCG", DEMO_DATE, t(18), t(22))
     add("BNC", "HYB", DEMO_DATE, t(19), t(23))

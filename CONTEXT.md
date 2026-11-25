@@ -1,95 +1,88 @@
 # GharChalo: Team Context
 
 > **Prepared by:** Sachin · **Last updated:** 25 Nov 2026
-> **For:** the teammates picking up **Flagsmith** and **Infra/NudgeBee**
-> **Source of truth for scope:** `../GharChalo_Hackathon_Roadmap.pdf` (P0 / P1 / P2 priorities)
+> **For:** everyone on the team (product, Flagsmith, infra/NudgeBee)
+> **Scope:** `GharChalo_Hackathon_Roadmap.pdf` (P0 / P1 / P2) · **What exists:** `PROJECT_INVENTORY.md` · **Flagsmith walkthrough:** `FLAGSMITH_SETUP.md`
 
-This file tells you what exists, how to run it, what you must not break, and exactly where your part plugs in.
+How to run everything, the rules, and the traps we already fell into. The full feature list lives in `PROJECT_INVENTORY.md`.
 
 ---
 
 ## 1. Status at a glance
 
-| Area | Status | Notes |
-|---|---|---|
-| Voice (Sarvam STT + extraction) | ✅ Done, tested live | Hindi works end to end with a real key |
-| Station aliases | ✅ Done | 32 stations / 11 cities, Hindi/Kannada/Tamil spellings |
-| Seeded data (trains, buses, travellers) | ✅ Done | Deterministic; SQLite and Postgres both verified |
-| `/search` (direct, nearby stations, cab estimate) | ✅ Done | |
-| `/match` + accept (co-travellers) | ✅ Done | Every offer is logged to `match_events` |
-| Multi-leg journeys (train/bus/cab) | ✅ Done (stretch, built early) | Timing rules tested on all city pairs |
-| Frontend (React) | ✅ Done | Speak/Type, tabs, picks, sort, mobile |
-| Backend tests | ✅ 98 passing | `pytest` in `api/` |
-| **Flagsmith** | ⏳ **Not started in code** | Dashboard setup in progress (Sachin). See §8 |
-| **`/metrics` (Prometheus)** | ❌ Not built | Needed by infra. See §9 |
-| Docker Compose (whole stack) | ✅ Done, verified | `docker compose up --build` → http://localhost:8080 |
-| Helm chart + local-cluster script | ✅ Done (lint/render verified, not yet deployed to a cluster) | `deploy/k8s-up.sh`. See §9 |
-| k6 storm, Grafana, NudgeBee | ❌ Not started | See §9 |
-| Bulbul TTS | ❌ Not built (optional) | `tatkal_level` 2 assumes it exists. See §8.4 |
-| Git repo | ✅ https://github.com/sachin9536/gharchalo | |
+| Area | Status |
+|---|---|
+| Product: voice + typed search, direct / nearby / multi-leg journeys, co-travellers | ✅ |
+| Product: seats on nearby dates, waitlist chance, spoken reply (Bulbul) | ✅ (new) |
+| Flagsmith: 8 flags, segment, 2 native experiments, events, analytics, demo identities | ✅ self-hosted, auto-configured |
+| Experiments page, simulator, matching benchmark | ✅ |
+| Docker Compose, Helm chart on minikube | ✅ deployed and verified |
+| NudgeBee agent | ✅ connected on minikube |
+| TatkalStorm traffic generator + planted incidents | ✅ built · RCA not captured yet |
+| Prometheus / Grafana dashboards | ⏳ (`/metrics` exists; nothing scrapes it in the cluster yet) |
+| Backend tests | ✅ 176 passing |
 
 ---
 
-## 2. Run it locally
+## 2. Run it
 
-**Fastest (Docker only, ≈2 minutes):**
+**Docker only (≈2 minutes):**
 ```bash
-cp api/.env.example api/.env    # optional: add SARVAM_API_KEY for voice
-docker compose up --build       # then open http://localhost:8080
+cp api/.env.example api/.env    # optional: add SARVAM_API_KEY for voice and spoken replies
+docker compose up --build       # http://localhost:8080
 ```
-**Kubernetes:** `deploy/k8s-up.sh` (kind / minikube / Docker Desktop), then the port-forward it prints.
+Behind a corporate proxy, voice may answer 502 inside containers: run `deploy/trust-corporate-ca.sh` once (see §10).
 
-**For development with hot reload:**
+**Kubernetes (minikube / kind / Docker Desktop):** `deploy/k8s-up.sh`, then
+`kubectl -n gharchalo port-forward svc/gharchalo-web 8080:80`.
 
-
-**Requirements:** Python 3.11+ (tested on 3.14), a recent Node (tested on 26), and optionally Docker for Postgres.
-
+**Development with hot reload** (Python 3.11+, recent Node):
 ```bash
-# API
 cd api
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env              # add SARVAM_API_KEY (ask Sachin); see §6 for other settings
-# Quickest database: SQLite. Put this line in .env:   DATABASE_URL=sqlite:///gharchalo.db
-.venv/bin/python seed.py          # DROPS and refills all tables
+cp .env.example .env                      # SARVAM_API_KEY; DATABASE_URL=sqlite:///gharchalo.db for quick dev
+.venv/bin/python seed.py                  # DROPS and refills all tables
 .venv/bin/uvicorn main:app --reload --port 8000
-.venv/bin/python -m pytest -q     # 97 tests, no Sarvam key needed (Sarvam is mocked)
+.venv/bin/python -m pytest -q             # 176 tests, no Sarvam key or Flagsmith needed
 
-# Web (second terminal)
-cd web && npm install && npm run dev      # http://localhost:5173, proxies /api/* -> :8000
+cd web && npm install && npm run dev      # http://localhost:5173 (proxies /api/* to :8000)
 ```
 
-**Postgres instead of SQLite** (needed for the DB-pool incident later):
+**Flagsmith locally** (optional; the app runs on safe defaults without it):
 ```bash
-docker run -d --name gharchalo-pg -p 5432:5432 \
-  -e POSTGRES_USER=gharchalo -e POSTGRES_PASSWORD=gharchalo -e POSTGRES_DB=gharchalo postgres:16
-# Wait ~5 s for first-time init, remove DATABASE_URL from .env (Postgres is the default), then:
-.venv/bin/python seed.py
+docker compose -f deploy/flagsmith/docker-compose.yml up -d    # dashboard http://localhost:8090
+python3 deploy/flagsmith/bootstrap.py                          # creates everything; safe to re-run
 ```
+Then restart the API. `/healthz` reports `"flagsmith": "flagsmith"`.
 
-**Check it works:** open http://localhost:5173, pick **Type → Bengaluru → Hyderabad → Fri 27 → Find ways home**.
+**Check it works:** http://localhost:5173 → Type → Bengaluru → Hyderabad → Fri 27 → *Find ways home*.
 
 ---
 
 ## 3. Architecture
 
 ```
-Browser (React + Vite, :5173)
-  │  /api/* proxied by Vite (no CORS)
+Browser (React + Vite)
+  │  /api/*  (Vite proxy in dev, nginx in Docker/Kubernetes)
   ▼
-FastAPI (:8000)
-  ├─ POST /voice ─────────► Sarvam STT (saaras) ─► Sarvam chat (sarvam-105b) ─► journey.py (aliases, validation)
-  ├─ POST /journey/parse ─► Sarvam chat only (text in)
-  ├─ GET  /search ────────► search.py ─► connections.py (multi-leg, only when needed)
-  ├─ POST /match, /match/{id}/accept ─► matching.py ─► match_events table
-  ├─ GET  /stations, /healthz
+FastAPI
+  ├─ /voice, /journey/parse ─► Sarvam STT + chat ─► journey.py (aliases, validation)
+  ├─ /speak ─────────────────► Sarvam Bulbul (cached; off at Tatkal level 2 / text-only)
+  ├─ /search, /search/dates ─► search.py ─► connections.py (multi-leg) · waitlist.py
+  ├─ /match, /match/{id}/accept ─► matching.py (exact / flexible)
+  ├─ /config, /experiments/* ─► flags.py (Flagsmith local evaluation) · experiment_events.py
+  └─ /metrics, /healthz
   ▼
 SQLAlchemy ─► Postgres (default) or SQLite
+Flagsmith (self-hosted, :8090) ◄─ local evaluation + exposure/conversion events
 ```
 
-**Key design rules:**
-- **The model never chooses station codes.** Sarvam returns the city words the speaker used, and `stations.py` maps them to codes.
-- **All data is simulated.** Every search and match response carries `source: "simulated"` and the UI labels it. Train numbers start with `9` and operators are invented.
-- **Load tests never reach Sarvam.** A request with the header `X-Load-Test: 1` gets a canned journey after about 0.8 s.
+**Design rules:**
+- **The model never chooses station codes.** Sarvam returns city words; `stations.py` maps them.
+- **All data is simulated** and labelled so (`source: "simulated"`).
+- **Load tests never reach Sarvam:** `X-Load-Test: 1` gets a canned journey or silence.
+- **Flagsmith can never break the app:** local evaluation, safe defaults, 2 s timeout and no retries when it is down.
+- **Analytics never break a request:** experiment events are buffered and best-effort.
 
 ---
 
@@ -97,235 +90,196 @@ SQLAlchemy ─► Postgres (default) or SQLite
 
 ```
 api/
-  main.py          routes + error mapping (start here)
-  config.py        every setting, read from env / api/.env
-  sarvam.py        Sarvam HTTP client (STT + chat), uses OS trust store for TLS
-  journey.py       raw extraction -> validated Journey (missing/warnings)
-  stations.py      alias resolution (reads seed_data.STATIONS)
-  seed_data.py     stations, routes, name pools, DEMO_DATE   <- edit here to change the data
-  seed.py          deterministic generator; scripted demo described in its docstring
-  models.py        tables: stations, services, travellers, match_events
-  db.py            engine; pool size/overflow/timeout from env (fault knobs)
-  search.py        /search logic (direct, nearby alternatives, cab estimate)
-  connections.py   multi-leg planner; timing rules in the docstring
-  matching.py      co-traveller strategies (exact / time_window)
-  fares.py, geo.py, schemas.py   small shared helpers
-  scripts/smoke_sarvam.py        check a real Sarvam key + model names
-  tests/           97 tests (seed, search, match, connections, voice)
+  main.py              routes, error mapping, Tatkal ladder, experiment read-outs (start here)
+  config.py            every setting (env / api/.env / api/.env.local)
+  flags.py             Flagsmith client, per-visitor flags, safe defaults
+  experiment_events.py exposures + conversions for Flagsmith's Experiments tab
+  sarvam.py            STT, extraction, text-to-speech
+  search.py            /search, /search/dates, cab estimate, waitlist chances
+  waitlist.py          waitlist confirmation rule of thumb
+  connections.py       multi-leg planner (timing rules in the docstring)
+  matching.py          exact / flexible co-traveller matching
+  benchmark.py         deterministic matching benchmark
+  cache.py, metrics.py Tatkal level-3 cache, Prometheus metrics
+  journey.py, stations.py, seed.py, seed_data.py, models.py, db.py, fares.py, geo.py, schemas.py
+  scripts/             smoke_sarvam.py, tatkal_storm.py
+  tests/               176 tests
 web/src/
-  App.tsx          page layout, voice flow, search state
-  TypedSearch.tsx  typed form (swap, date chips, popular routes)
-  Results.tsx      tabs, picks, direct + nearby lists, cab card
-  Connections.tsx  multi-leg journeys
-  CabMatches.tsx   co-traveller list + accept
-  api.ts           typed API client (mirrors the backend models)
-  user.ts          anonymous stable user id (localStorage) <- Flagsmith identity
-  demo.ts          demo dates, popular routes, example phrases
-  useRecorder.ts, wav.ts   mic recording + browser-side WAV conversion
+  App.tsx              layout, voice flow, search state, Flagsmith banners
+  Results.tsx          tabs, picks, filters, date strip, read aloud, nearby stations, cab
+  Experiments.tsx      the experiments page (stats.ts for intervals and tests)
+  TypedSearch, Welcome, Connections, CabMatches, DateStrip, ReadAloud (components)
+  api.ts               typed API client · user.ts identity (+ ?as= demo identity) · urlstate.ts shareable URLs
+deploy/
+  k8s-up.sh, k8s-down.sh, trust-corporate-ca.sh
+  helm/gharchalo/      chart (api, web, postgres, seed job, CA bundle)
+  flagsmith/           self-hosted Flagsmith + bootstrap.py
+  experiments/         simulate.py
+  storm/run.sh         TatkalStorm as an in-cluster Job
+  incidents/incident.sh planted incidents on/off
+  nudgebee/            agent values for corporate-proxy networks
 ```
 
 ---
 
-## 5. API contract (do not change shapes without telling the team)
+## 5. API contract (tell the team before changing a shape)
 
-| Method | Path | Input | Output (key fields) |
-|---|---|---|---|
-| POST | `/voice` | multipart `file`; optional header `X-Load-Test: 1` | `{transcript, language_code, journey, source: "sarvam"\|"stub"}` |
-| POST | `/journey/parse` | `{text}` | same as `/voice` |
-| GET | `/search` | `origin, dest, date, max_station_distance_km (0–30, default 15), include_connections (bool)` | `{source, options[], preferred_station_has_train_seats, alternatives[], more_alternatives_beyond_limit, cab{}, connections[], connections_reason}` |
-| POST | `/match` | `{user_id, origin, dest, date, window_start, window_end, strategy: "exact"\|"time_window"}` | `{match_id, strategy, offered, suggested_group_size, matches[]}` |
-| POST | `/match/{id}/accept` | none | `{match_id, accepted}` |
-| GET | `/stations` | none | each city's main station |
-| GET | `/healthz` | none | `{status, sarvam_configured}` |
+The full list of 14 endpoints is in `PROJECT_INVENTORY.md` §6. The ones other code relies on:
 
-**Journey JSON** (Sarvam extraction → backend):
-```json
-{ "origin": {"spoken": "बैंगलोर", "code": "SBC", "name": "KSR Bengaluru City"},
-  "destination": {"spoken": "हैदराबाद", "code": "HYB", "name": "Hyderabad Deccan (Nampally)"},
-  "date": "2026-11-27", "fallback_mode": "train|shared_cab|any", "language": "hi",
-  "missing": [], "warnings": [] }
-```
+| Method | Path | Key fields |
+|---|---|---|
+| GET | `/search` | `options[]` (with `confirm_chance` on waitlisted trains), `alternatives[]`, `cab`, `connections[]`, `tatkal_level`, `served_from`, `search_id` |
+| GET | `/search/dates` | `days[]`: `options`, `with_seats`, `trains_with_seats`, `buses_with_seats`, `cheapest_with_seats` |
+| POST | `/match` | `strategy`, `offered`, `matches[]` (each with `pickup_km`, `day_shift`, `time_gap_min`), `paused` |
+| POST | `/speak` | `{text, language, date}` → `audio/wav` |
+| GET | `/config` | `tatkal_level`, `poll_s`, `interaction_mode`, `cohort_km`, `matching_strategy`, `urgent` |
 
-**Error codes:**
+Identity: the browser sends `X-User-Id` (anonymous, stable; `?as=demo-5km` pins a demo identity).
 
-| Code | Meaning |
-|---|---|
-| 400 | Bad input (empty audio or text, same-city search) |
-| 404 | Unknown station or match |
-| 409 | Accepting an offer that had no matches |
-| 413 | Audio upload too large |
-| 422 | Validation error, or no speech detected |
-| 502 | Sarvam failure |
-| **503** | **Sarvam rate limit (429), or database unavailable / connection pool exhausted** |
-
-Infra should alert on the 503s.
+**Error codes:** 400 bad input · 404 unknown station/match · 409 a deliberate "off" (text-only mode, Tatkal-paused spoken
+replies, accepting an empty offer) · 413 audio too large · 422 validation / no speech · 502 Sarvam failure ·
+**503** Sarvam rate limit, or database unavailable / pool exhausted.
 
 ---
 
-## 6. Configuration (`api/.env`, all optional except the key)
+## 6. Configuration (`api/.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SARVAM_API_KEY` | none | Required for voice. **Never commit it.** |
-| `SARVAM_CHAT_MODEL` | `sarvam-105b` | `sarvam-m` is deprecated |
-| `SARVAM_STT_MODEL` | `saaras:v3` | |
-| `SARVAM_TIMEOUT_SECONDS` | `30` | Raise it if the 105B model times out |
-| `SARVAM_CA_BUNDLE` | none | Path to a PEM file, only if a corporate proxy re-signs TLS and the OS keychain doesn't trust it |
+| `SARVAM_API_KEY` | none | Voice and spoken replies. **Never commit it** |
+| `SARVAM_CHAT_MODEL` / `SARVAM_STT_MODEL` | `sarvam-105b` / `saaras:v3` | `sarvam-m` is retired |
+| `SARVAM_TTS_MODEL` / `SARVAM_TTS_SPEAKER` | Sarvam's defaults | e.g. `bulbul:v3` / `priya` |
+| `TTS_MAX_CHARS` | `500` | Longer text is cut |
+| `SARVAM_TIMEOUT_SECONDS` | `30` | |
+| `SARVAM_CA_BUNDLE` | none | Corporate root CA (PEM), added to the system CAs |
 | `DATABASE_URL` | Postgres on localhost | `sqlite:///gharchalo.db` for quick dev |
-| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `10` / `10` | **Fault knob:** set to `2` / `0` for the DB-pool incident |
-| `DB_POOL_TIMEOUT_SECONDS` | `10` | How long a request waits for a connection before it returns 503 |
-| `LOAD_TEST_STUB_DELAY_SECONDS` | `0.8` | Fake Sarvam latency for `X-Load-Test` requests |
-| `MAX_AUDIO_BYTES` | 10 MB | |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_SECONDS` | `10` / `10` / `10` | DB-pool incident knobs |
+| `FLAGSMITH_SERVER_KEY`, `FLAGSMITH_API_URL` | none | Written to `api/.env.local` by `bootstrap.py` |
+| `FLAGSMITH_REFRESH_SECONDS` | `10` | How fast dashboard changes land |
+| `FLAGSMITH_TIMEOUT_SECONDS` | `2` | Fail fast when Flagsmith is down |
+| `FLAGSMITH_ANALYTICS` / `FLAGSMITH_EVENTS` | `1` / `1` | Flag charts / experiment events |
+| `FLAGSMITH_OFFLINE_FILE` | none | `flagsmith_env.json` for no-Wi-Fi demos |
+| `ALLOW_FLAG_OVERRIDE` | `1` | Demo override buttons (km cohort, matching strategy) |
+| `DEMO_NOW` | real time | Pins "today" (urgency, waitlist chance) for a predictable demo |
+| `FAULT_UNBOUNDED_SEARCH_LOG` | `0` | **Planted memory leak** for the incident demo |
+| `LOAD_TEST_STUB_DELAY_SECONDS` | `0.8` | Fake Sarvam latency for load tests |
+
+`api/.env.local` (written by `bootstrap.py`) is read before `api/.env`. Both are git-ignored and excluded from images.
 
 ---
 
-## 7. The seeded data and the scripted demo
+## 7. Data and the scripted demo
 
-- **Volume:** 32 stations, **1,587 trains, 613 buses, 300 travellers**. It covers **26 Nov – 1 Dec 2026** only, and other dates return empty results.
-- **Repeatable:** seeding is deterministic, so the same data comes out every time. That matters for repeatable storms.
-- **Changing the dates:** if the hackathon dates differ, change `DEMO_DATE`, `DEFAULT_START_DATE` and `DEFAULT_DAYS` in `seed_data.py`, plus `DEMO_DATE` and `SEED_DATES` in `web/src/demo.ts`.
+32 stations · 1,587 trains · 613 buses · 300 travellers · **26 Nov – 1 Dec 2026** only · deterministic. To move dates, change
+`DEMO_DATE`, `DEFAULT_START_DATE`, `DEFAULT_DAYS` in `seed_data.py` and `DEMO_DATE`, `SEED_DATES` in `web/src/demo.ts`.
 
-**Demo route: Bengaluru → Hyderabad, Fri 27 Nov.** Tests check every point below.
+**Bengaluru → Hyderabad, Fri 27 Nov** (tests pin all of this):
 
 | What | Value |
 |---|---|
-| Trains from KSR Bengaluru City (SBC) | All waitlisted |
-| Trains with seats from nearby stations | BNC **3.7 km**, SMVB **11.3 km**, BID **28.1 km**. The 5 / 15 / 30 km cohorts see **1 / 2 / 3** of them |
-| Buses from SBC | Have seats (₹1,200–₹1,450) |
-| Shared cab estimate | ~625 km, ~₹8,125 per cab |
-| Co-travellers, evening 18:00–22:00 | **3** exact matches, **6** with the flexible strategy |
-
-**Multi-leg journeys:**
-- 68 of 110 city pairs have one.
-- Bengaluru → Jaipur has no direct service, so connections appear automatically. Example: a train to Kota, then a shared cab.
+| Trains from KSR Bengaluru City (SBC) | All waitlisted (WL 118 SL ≈ 26%, WL 46 3A ≈ 40% may confirm) |
+| Train seats from nearby stations | BNC 3.7 km, SMVB 11.3 km, BID 28.1 km → 5 / 15 / 30 km cohorts see 1 / 2 / 3 |
+| Buses from SBC | Seats available |
+| Nearby days | Seats on 26, 28, 29, 30 Nov |
+| Co-travellers, evening | 1 exact, 6 flexible |
+| Bengaluru → Jaipur | No direct service: journeys with changes appear automatically |
 
 ---
 
-## 8. Handoff: Flagsmith (the "Best use of Flagsmith" prize)
+## 8. Flagsmith
 
-### 8.1 Dashboard (Sachin is setting this up; confirm the names before coding)
+Everything (flags, segment, identities, experiments, events, how to read the numbers) is listed in `PROJECT_INVENTORY.md` §2 and
+walked through in `FLAGSMITH_SETUP.md` (§0 setup, §0b experiments page and simulator, §0c matching A/B, §0d the Flagsmith UI).
 
-**Server-side environment key** (starts with `ser.`): put it in `api/.env` as `FLAGSMITH_SERVER_KEY`. Use **local evaluation**, so flag checks make no network call per request.
-
-**Features:**
-
-| Feature | Type | Value |
-|---|---|---|
-| `tatkal_level` | Remote config, number | `0` |
-| `max_station_distance_km` | Multivariate | `15` control, plus `5` and `30` at 33% each |
-| `matching_strategy` | Multivariate | `exact` control, `time_window` 50% |
-| `matching_config` | Remote config, JSON | `{"time_window_min":120,"date_flex_days":1,"max_matches":8}` |
-| `interaction_mode` | Remote config, string | `voice` (P1: `text_only` fallback) |
-
-**Segment `urgent_travellers`:**
-- Rule: trait `travels_within_48h == true`.
-- **Segment override:** `tatkal_level = 0`.
-
-**Still unverified:** whether the free tier includes segment overrides, multivariate flags and the audit log.
-
-### 8.2 Where it plugs in
-
-| Flag | Current temporary control | Replace with |
-|---|---|---|
-| `max_station_distance_km` | Query param on `GET /search` (`main.py` → `search_journeys`); the UI's 5/15/30 km buttons in `Results.tsx`, driven by `maxKm` state in `App.tsx` | Read per identity on the server; remove the buttons (or keep a demo-only override) |
-| `matching_strategy` | `strategy` field on `POST /match`; the UI buttons in `CabMatches.tsx` | Read per identity; `matching.find_matches` already accepts `strategy` |
-| `matching_config` | `matching.DEFAULT_CONFIG` | Pass the flag JSON as `config=` to `find_matches` (it merges over the defaults) |
-| `tatkal_level` | Not implemented | See §8.4 |
-
-### 8.3 Identity
-
-- **Identifier:** the browser sends an anonymous stable id (`web/src/user.ts`, localStorage key `gharchalo.userId`). It's already sent as `user_id` on `/match`.
-- **`/search`:** it does not send an id yet. Add a `user_id` param or header so the distance cohort is per user.
-- **Trait `travels_within_48h`:** compute it on the server from the journey date.
-- **Trait `lang`:** comes from the journey's `language`. Optional.
-- **Safe defaults:** always give each flag a default (the current hardcoded values), so the app works when Flagsmith is unreachable.
-
-### 8.4 `tatkal_level` (experiment A) ladder, and the gaps
-
-| Level | Roadmap behaviour | Reality today |
-|---|---|---|
-| 1 | Poll every 120 s | ⚠️ **The frontend does not poll at all.** Either add polling or pick a different level-1 action |
-| 2 | Skip TTS | ⚠️ **TTS isn't built.** Build a minimal Bulbul reply, or redefine level 2 (e.g. skip multi-leg planning, which is CPU-heavy) |
-| 3 | Serve `/search` from a 30 s cache; pause `/match` | Not built; straightforward in `search.py` / `main.py` |
-
-Urgent travellers (the segment override) must stay at level 0.
-
-### 8.5 Experiment B logging (not built)
-
-The roadmap wants these per cohort: alternatives shown, alternatives selected, selection rate, extra distance and abandonment.
-- **Today:** only `match_events` exists (offers and accepts per strategy).
-- **Needed:** a table or log for search impressions and a "select alternative" action. There is no select button on alternatives yet.
+Things that surprise people:
+- **A flag inside a running experiment ignores edits in the Features tab.** Change it from the **Experiments** tab (this hit
+  `max_station_distance_km` when it was moved from 15 to 20 and back).
+- **`tatkal_level` 2 also turns off spoken replies**, except for travellers within 48 hours (they stay at level 0).
+- **Pinned demo identities** never take part in experiments (identity overrides are hand-picked by design).
+- **Experiment numbers from the simulator are noise:** its visitors behave identically in every variant.
 
 ---
 
-## 9. Handoff: Infra + NudgeBee
+## 9. Infra, NudgeBee and the incident demo
 
-### 9.1 Needed from the app (not built yet; whoever gets there first)
+```bash
+deploy/k8s-up.sh                          # build, load into minikube, install/upgrade the chart
+deploy/storm/run.sh                       # TatkalStorm Job; extra args go to the script (e.g. --peak-rps 80)
+deploy/incidents/incident.sh oom          # leaky release + 128Mi memory limit
+deploy/incidents/incident.sh status       # restarts, last termination reason (OOMKilled), warning events
+deploy/incidents/incident.sh fix          # remove the leak, 512Mi, healthy pool
+```
 
-- [ ] **`/metrics`** in Prometheus format. Suggested: `prometheus-fastapi-instrumentator` for request rate, latency and status. Add counters for:
-  - `matches_offered_total{strategy}` and `matches_accepted_total{strategy}`
-  - `search_source_total{source}` (live or cache, once caching exists)
-  - a `tatkal_level` gauge
-- [x] **`api/Dockerfile`** and **`web/Dockerfile`** (nginx serves the build and proxies `/api/*` to the API; `API_UPSTREAM` sets the target).
-- [x] **`docker-compose.yml`**: Postgres, a one-off `seed` service (`seed.py --if-empty --wait 60`, so restarts never wipe data), API, web on `:8080`.
-- [x] **Helm chart `deploy/helm/gharchalo`**: api + web + Postgres Deployments/Services, `/healthz` probes, a post-install seed Job, secrets for the DB URL and the Sarvam key. `deploy/k8s-up.sh` / `k8s-down.sh` wrap it for local clusters.
-- [ ] **Not yet:** a real cluster run (lint and render only so far), Prometheus scrape annotations (add them once `/metrics` exists), kube-prometheus-stack, NudgeBee agent.
+**Why a planted leak:** the app's memory is flat under load (75–82 MiB at 80 req/s), so a lower limit alone never crashed it.
+`FAULT_UNBOUNDED_SEARCH_LOG` keeps every search response, so memory climbs with traffic and Kubernetes kills the container.
 
-### 9.2 Fault knobs (the planted incidents)
+**Demo flow:** healthy storm (baseline) → `incident.sh oom` → storm → NudgeBee shows the OOMKilled restarts → ask NuBi for the root
+cause → `incident.sh fix` → storm again → compare. **Status:** the healthy baseline is measured (1,987/1,987 OK at 40 req/s,
+p50 3–6 ms); the incident run and the RCA are still to be captured.
 
-| Incident | Knob | Expected signal |
-|---|---|---|
-| Memory | Helm: `--set api.resources.limits.memory=128Mi` (fix: `512Mi`) | `OOMKilled` restarts |
-| DB pool | Helm: `--set api.dbPool.size=2 --set api.dbPool.maxOverflow=0` (fix: `20` / `10`). Compose: `DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 docker compose up -d api` | 503s with `Database unavailable (TimeoutError)`, p95 up |
-
-Pass Helm knobs straight through the script: `deploy/k8s-up.sh --set api.resources.limits.memory=128Mi`.
-
-There is no app code to write for these; the knobs are config only.
-
-### 9.3 Load test (TatkalStorm)
-
-- **Sarvam:** send `X-Load-Test: 1` on every `/voice` request. **Never** send storm traffic to the real Sarvam API.
-- **Suggested mix:** `/search` 70%, `/match` 20%, `/voice` (stubbed) 10%.
-- **Demo route:** `origin=SBC&dest=HYB&date=2026-11-27`.
-- **Hot spot:** `/search` with `include_connections=true`, or a route with no direct seats such as `SBC → JP`, runs the multi-leg planner. That costs a few ms of CPU each time, so use it to create load.
-- **Writes:** `/match` writes a row on every call, which adds DB pressure.
-
-### 9.4 NudgeBee
-
-- **Inputs it needs:** a cluster connection, Prometheus and an LLM connection. Verify these first; it's the biggest unknown.
-- **Minimum deliverable:** one credible diagnosis. OOMKilled alone is enough.
-- **Don't overclaim:** don't say NuBi changed anything automatically unless that has been tested end to end.
+The NudgeBee agent setup on a corporate network is in §14. NudgeBee sees the whole cluster.
 
 ---
 
 ## 10. Gotchas we already hit
 
-- **TLS errors to Sarvam** (`CERTIFICATE_VERIFY_FAILED`): a corporate proxy re-signs HTTPS. The client already uses the OS trust store (`truststore`). If it still fails, set `SARVAM_CA_BUNDLE`.
-- **`sarvam-m` is deprecated:** use `sarvam-105b`. `scripts/smoke_sarvam.py` prints Sarvam's own error when a model name is wrong.
-- **Postgres first start:** the container needs a few seconds before it accepts connections. Seeding instantly fails with "server closed the connection".
-- **`.env` is read at startup only:** restart uvicorn after editing it. `--reload` covers code, not `.env`.
-- **`seed.py` drops all tables** unless you pass `--if-empty` (the containers always do). Never point the plain command at anything you care about.
-- **Corporate proxy (Palo Alto SSL inspection) and Docker/Kubernetes:** containers don't trust the proxy's root certificate the way a Mac does, so `/voice` answers **502** (`CERTIFICATE_VERIFY_FAILED ... self-signed certificate in certificate chain`). Typed search is unaffected. Fix: run **`deploy/trust-corporate-ca.sh`** once (saves your network's root to the git-ignored `certs/corp-ca.pem` and sets `CONTAINER_CA_BUNDLE` in `./.env`), then `docker compose up -d --build`. `deploy/k8s-up.sh` picks the file up automatically. The certificate is added to the normal trusted CAs, so it also works off the corporate network.
-- **React StrictMode in dev** runs effects twice, so dev logs duplicate `/match` offers. Don't read the dev experiment counts as real.
+- **Corporate proxy (Palo Alto SSL inspection):** anything that does not use the Mac's keychain fails with
+  `certificate verify failed` / `x509: unknown authority`: Sarvam from containers (502), minikube image pulls, the NudgeBee runner.
+  Fix: `deploy/trust-corporate-ca.sh` saves the root to `certs/corp-ca.pem` (git-ignored); Compose, the Helm chart and the
+  NudgeBee values file use it.
+- **Local secrets in images:** `api/.env.local` was once copied into the API image and made every request in the cluster ~1.2 s
+  slow (it pointed at a Flagsmith on `localhost` that does not exist there). `.dockerignore` now excludes `.env*`.
+- **`sarvam-m` is retired** (use `sarvam-105b`); `scripts/smoke_sarvam.py` prints Sarvam's own error.
+- **`.env` is read at start-up only:** restart uvicorn after editing it.
+- **`seed.py` drops all tables** unless given `--if-empty` (containers always use it).
+- **Postgres first start** needs a few seconds before it accepts connections.
+- **React StrictMode in dev** runs effects twice: dev experiment counts are inflated.
 
 ---
 
-## 11. Rules (from the roadmap; non-negotiable)
+## 11. Rules (roadmap; non-negotiable)
 
-- No IRCTC scraping, no booking, and no storing of anyone's credentials.
-- Label every simulated number as simulated, and never present load numbers as real railway traffic.
-- Generate load only against our own infrastructure.
-- Keep faults controlled and reversible.
-- Remediation is human-approved unless automation has actually been tested.
-- **Hour 3:** if the core flow is broken, drop extras. **Hour 6:** feature freeze.
+- No IRCTC scraping, no booking, no stored credentials.
+- Label every simulated number as simulated; never present load as real railway traffic.
+- Generate load only against our own infrastructure. Faults stay controlled and reversible.
+- Remediation is human-approved unless automation was actually tested.
+- Never commit keys: Sarvam, Flagsmith server key, NudgeBee install keys.
 
 ---
 
-## 12. Open questions
+## 12. Open items
 
-- [ ] Flagsmith free-tier limits (segment overrides, multivariate, audit log)
-- [ ] Which LLM NuBi needs, and who provides the key
-- [ ] Can NudgeBee reach a local kind cluster, or do we need a cloud cluster?
-- [ ] `tatkal_level` levels 1 and 2: add polling and TTS, or redefine them (§8.4)
-- [ ] Real hackathon dates: do the seed dates need moving (§7)?
-- [ ] Submission format (repo, video, live demo)
+See `PROJECT_INVENTORY.md` §9 (NudgeBee RCA, fare split, Tatkal countdown, Prometheus/Grafana, key rotation).
+
+---
+
+## 13. Experiments and honest reporting
+
+The **Experiments** page (header link, `/#experiments`) and Flagsmith's own **Experiments** tab both show the two experiments.
+`deploy/experiments/simulate.py` adds clearly labelled synthetic visitors (`sim-…`), kept apart from real ones everywhere.
+**Say:** Flagsmith assigned the variants, every event was recorded, and the read-out shows sample sizes and confidence ranges;
+Tatkal degradation was measured on our own system. **Don't say:** that travellers preferred a variant.
+
+---
+
+## 14. NudgeBee agent on minikube (corporate proxy)
+
+Install with the command from the NudgeBee dashboard (it carries account keys: **never commit them**). Then, on a network that
+re-signs HTTPS:
+
+1. **Image pulls fail** (`ErrImagePull`): pull with the Mac's Docker and load into minikube.
+   ```bash
+   kubectl -n nudgebee-agent get deploy,ds -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}'
+   docker pull <image> && minikube image load <image>        # for each image
+   kubectl -n nudgebee-agent delete pod --all
+   ```
+2. **The runner cannot reach** `relay.nudgebee.com` / `collector.nudgebee.com`: give it the corporate root CA.
+   ```bash
+   kubectl -n nudgebee-agent create configmap corp-ca --from-file=corp-ca.pem=certs/corp-ca.pem
+   helm upgrade nudgebee-agent nudgebee-agent/nudgebee-agent -n nudgebee-agent --reuse-values \
+     -f deploy/nudgebee/trust-corporate-ca.values.yaml
+   ```
+   Success: `"relay connected"` in `kubectl -n nudgebee-agent logs deploy/nudgebee-agent-runner`.
+
+The agent can read pod logs, events and ConfigMaps in every namespace (not Secrets) and can delete pods, patch deployments and
+exec into pods. Prometheus, Loki and ClickHouse were not installed; NudgeBee works from Kubernetes events and the agent's data.

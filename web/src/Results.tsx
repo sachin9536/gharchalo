@@ -1,7 +1,10 @@
 import { useState } from 'react'
-import type { Option, SearchResponse } from './api'
+import { selectAlternative, type Option, type SearchResponse } from './api'
 import CabMatches from './CabMatches'
 import Connections from './Connections'
+import DateStrip from './DateStrip'
+import ReadAloud from './ReadAloud'
+import { spokenSummary, type SpokenLang } from './speech'
 import {
   DAY_PARTS,
   MODE_ICON,
@@ -39,7 +42,19 @@ const COMPARE: Record<Sort, (a: Option, b: Option) => number> = {
 
 const available = (o: Option) => o.status === 'available'
 
-function OptionRow({ o, showOrigin, badges = [] }: { o: Option; showOrigin?: boolean; badges?: string[] }) {
+function OptionRow({
+  o,
+  showOrigin,
+  badges = [],
+  onSelect,
+  selected,
+}: {
+  o: Option
+  showOrigin?: boolean
+  badges?: string[]
+  onSelect?: () => void
+  selected?: boolean
+}) {
   const plus = dayOffset(o.depart_at, o.arrive_at)
   return (
     <li className={`option ${o.status}`}>
@@ -74,18 +89,37 @@ function OptionRow({ o, showOrigin, badges = [] }: { o: Option; showOrigin?: boo
         ) : (
           <span className="chip wl">WL {o.waitlist}</span>
         )}
+        {o.confirm_chance !== null && (
+          <div>
+            <span
+              className={`chance ${o.confirm_chance >= 0.7 ? 'high' : o.confirm_chance >= 0.4 ? 'medium' : 'low'}`}
+              title="Rough estimate from the waitlist length, the class and the days left before travel. Simulated data, not a prediction."
+            >
+              ~{Math.round(o.confirm_chance * 100)}% may confirm
+            </span>
+          </div>
+        )}
+        {onSelect && (
+          <div>
+            <button className={`km select-alt ${selected ? 'on' : ''}`} onClick={onSelect} disabled={selected}>
+              {selected ? 'Selected ✓' : 'Choose this'}
+            </button>
+          </div>
+        )}
       </div>
     </li>
   )
 }
 
-type Pick = { title: string; detail: string; arrive: string; fare: number; tab: Tab; badge: string }
+type Pick = { title: string; detail: string; departs: string; arrive: string; fare: number; tab: Tab; badge: string; kind: string }
 
 function bestPicks(data: SearchResponse): { quickest?: Pick; cheapest?: Pick } {
   const all: Pick[] = [
     ...data.options.filter(available).map((o) => ({
       title: o.name,
       detail: `Leaves ${o.origin.name} at ${clock(o.depart_at)}`,
+      departs: o.depart_at,
+      kind: o.mode,
       arrive: o.arrive_at,
       fare: o.fare,
       tab: o.mode,
@@ -94,6 +128,8 @@ function bestPicks(data: SearchResponse): { quickest?: Pick; cheapest?: Pick } {
     ...data.alternatives.map((o) => ({
       title: o.name,
       detail: `Leaves ${o.origin.name} (${o.distance_km} km away) at ${clock(o.depart_at)}`,
+      departs: o.depart_at,
+      kind: 'nearby',
       arrive: o.arrive_at,
       fare: o.fare,
       tab: 'nearby' as const,
@@ -102,6 +138,8 @@ function bestPicks(data: SearchResponse): { quickest?: Pick; cheapest?: Pick } {
     ...data.connections.map((it) => ({
       title: chain(it),
       detail: `${via(it)} · leaves ${dayStamp(it.depart_at)}`,
+      departs: it.depart_at,
+      kind: 'changes',
       arrive: it.arrive_at,
       fare: it.total_fare,
       tab: 'changes' as const,
@@ -144,24 +182,49 @@ export function ResultsSkeleton() {
 export default function Results({
   data,
   updating,
-  maxKm,
+  maxKmOverride,
+  allowOverride,
   onMaxKm,
   onShowConnections,
   onModify,
   onNotify,
+  onPickDate,
+  spokenLang,
+  autoSpeak,
+  voiceOff,
 }: {
   data: SearchResponse
   updating: boolean
-  maxKm: number
-  onMaxKm: (km: number) => void
+  maxKmOverride: number | null
+  allowOverride: boolean
+  onMaxKm: (km: number | null) => void
   onShowConnections: () => void
   onModify: () => void
   onNotify: (message: string) => void
+  onPickDate: (date: string) => void
+  spokenLang: SpokenLang
+  autoSpeak: boolean
+  voiceOff: boolean
 }) {
   const [tab, setTab] = useState<Tab>('all')
   const [sort, setSort] = useState<Sort>('depart')
   const [seatsOnly, setSeatsOnly] = useState(false)
   const [part, setPart] = useState<DayPart>('any')
+  const [selectedAlt, setSelectedAlt] = useState<number | null>(null)
+  const [selectError, setSelectError] = useState<string | null>(null)
+
+  // The cohort distance actually applied by the server (Flagsmith, or the demo override).
+  const activeKm = data.max_station_distance_km
+  const chooseAlt = async (serviceId: number) => {
+    if (data.search_id === null) return
+    setSelectError(null)
+    try {
+      await selectAlternative(data.search_id, serviceId)
+      setSelectedAlt(serviceId)
+    } catch (e) {
+      setSelectError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const passes = (o: Option) => (!seatsOnly || available(o)) && (part === 'any' || dayPart(o.depart_at) === part)
   const allTrains = data.options.filter((o) => o.mode === 'train')
@@ -231,6 +294,37 @@ export default function Results({
         </div>
         <div className="routebar-side">
           {updating && <span className="spinner" role="status" aria-label="Updating" />}
+          {data.served_from === 'cache' && <span className="tag soft">cached</span>}
+          <ReadAloud
+            textFor={(lang) =>
+              spokenSummary(
+                {
+                  origin: data.origin.city,
+                  destination: data.destination.city,
+                  date: data.date,
+                  best: quickest && {
+                    title: quickest.title,
+                    departs: clock(quickest.departs),
+                    arrives: clock(quickest.arrive),
+                    fare: quickest.fare,
+                    mode: quickest.kind,
+                  },
+                  cabEach: cab4.per_person,
+                },
+                lang,
+              )
+            }
+            date={data.date}
+            initialLang={spokenLang}
+            autoPlay={autoSpeak}
+            disabledReason={
+              data.tatkal_level >= 2
+                ? 'Spoken replies paused during peak demand'
+                : voiceOff
+                  ? 'Voice is paused right now'
+                  : null
+            }
+          />
           <button className="ghost" onClick={() => void copyLink()}>
             🔗 Copy link
           </button>
@@ -258,6 +352,8 @@ export default function Results({
           </>
         )}
       </p>
+
+      <DateStrip query={{ origin: data.origin.code, dest: data.destination.code, date: data.date }} onPick={onPickDate} />
 
       <nav className="tabs" role="tablist" aria-label="Result types">
         {tabs
@@ -294,7 +390,7 @@ export default function Results({
               <span className="pick-label">{showNearby ? '📍 Nearby stations' : '🔀 With changes'}</span>
               <strong>{showNearby ? 'Trains with seats close by' : 'Combine trains, buses and cabs'}</strong>
               <span className="muted small">
-                {showNearby ? `${data.alternatives.length} within ${maxKm} km` : 'We check timings for you'}
+                {showNearby ? `${data.alternatives.length} within ${activeKm} km` : 'We check timings for you'}
               </span>
               <span className="pick-go">See details →</span>
             </button>
@@ -394,29 +490,49 @@ export default function Results({
 
       {visible('nearby') && showNearby && (
         <section className="card">
-          <h2>📍 Trains with seats from nearby stations</h2>
+          <div className="card-head">
+            <h2>📍 Trains with seats from nearby stations</h2>
+            <span className="tag soft">{activeKm} km cohort</span>
+          </div>
           <p className="warn">
-            No train with seats leaves {data.origin.name}. Show stations within
-            {DISTANCE_CHOICES.map((km) => (
-              <button
-                key={km}
-                className={`km ${km === maxKm ? 'on' : ''}`}
-                onClick={() => onMaxKm(km)}
-                aria-pressed={km === maxKm}
-              >
-                {km} km
-              </button>
-            ))}
-            <span className="muted small"> (Flagsmith will assign this per user)</span>
+            No train with seats leaves {data.origin.name}. Showing nearby stations within <strong>{activeKm} km</strong>
+            {allowOverride && (
+              <>
+                {' '}
+                · demo override:
+                {DISTANCE_CHOICES.map((km) => (
+                  <button
+                    key={km}
+                    className={`km ${km === activeKm ? 'on' : ''}`}
+                    onClick={() => onMaxKm(km)}
+                    aria-pressed={km === activeKm}
+                  >
+                    {km} km
+                  </button>
+                ))}
+                {maxKmOverride !== null && (
+                  <button className="link small" onClick={() => onMaxKm(null)}>
+                    reset
+                  </button>
+                )}
+              </>
+            )}
           </p>
+          {selectError && <p className="error">{selectError}</p>}
           {data.alternatives.length ? (
             <ul className="options">
               {data.alternatives.map((o) => (
-                <OptionRow key={o.id} o={o} showOrigin />
+                <OptionRow
+                  key={o.id}
+                  o={o}
+                  showOrigin
+                  onSelect={data.search_id !== null ? () => void chooseAlt(o.id) : undefined}
+                  selected={selectedAlt === o.id}
+                />
               ))}
             </ul>
           ) : (
-            <p className="muted">Nothing with seats within {maxKm} km. Try a longer distance above.</p>
+            <p className="muted">Nothing with seats within {activeKm} km. Try a longer distance above.</p>
           )}
           {data.more_alternatives_beyond_limit > 0 && (
             <p className="muted small">
@@ -452,6 +568,7 @@ export default function Results({
             dest={data.destination.code}
             date={data.date}
             shares={data.cab.shares}
+            allowOverride={allowOverride}
           />
         </section>
       )}

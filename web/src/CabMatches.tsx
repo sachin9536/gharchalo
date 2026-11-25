@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { acceptMatch, postMatch, type MatchResponse, type Strategy } from './api'
+import { span } from './format'
 import { getUserId } from './user'
 
 const WINDOWS = [
@@ -23,20 +24,22 @@ export default function CabMatches({
   dest,
   date,
   shares,
+  allowOverride,
 }: {
   origin: string
   dest: string
   date: string
   shares: { people: number; per_person: number }[]
+  allowOverride?: boolean
 }) {
   const [windowIdx, setWindowIdx] = useState(DEFAULT_WINDOW)
-  // Temporary: Flagsmith's matching_strategy will decide this per user.
-  const [strategy, setStrategy] = useState<Strategy>('exact')
+  // null = let Flagsmith's matching_strategy decide per user.
+  const [strategyOverride, setStrategyOverride] = useState<Strategy | null>(null)
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [accepted, setAccepted] = useState<number | null>(null)
   const [acceptError, setAcceptError] = useState<string | null>(null)
 
-  const key = `${origin}|${dest}|${date}|${windowIdx}|${strategy}`
+  const key = `${origin}|${dest}|${date}|${windowIdx}|${strategyOverride ?? 'auto'}`
   const settled = outcome?.key === key ? outcome : null
 
   useEffect(() => {
@@ -45,7 +48,15 @@ export default function CabMatches({
     // Each response is logged as an "offer" for the experiment metrics. In dev,
     // React StrictMode runs this effect twice, so dev counts are inflated.
     postMatch(
-      { user_id: getUserId(), origin, dest, date, window_start: w.start, window_end: w.end, strategy },
+      {
+        user_id: getUserId(),
+        origin,
+        dest,
+        date,
+        window_start: w.start,
+        window_end: w.end,
+        ...(strategyOverride ? { strategy: strategyOverride } : {}),
+      },
       controller.signal,
     )
       .then((data) => setOutcome({ key, data }))
@@ -54,14 +65,15 @@ export default function CabMatches({
         setOutcome({ key, error: e instanceof Error ? e.message : String(e) })
       })
     return () => controller.abort()
-  }, [key, origin, dest, date, windowIdx, strategy])
+  }, [key, origin, dest, date, windowIdx, strategyOverride])
 
   const data = settled?.data
+  const activeStrategy = strategyOverride ?? data?.strategy
   const perPerson = data ? shares.find((s) => s.people === data.suggested_group_size)?.per_person : undefined
-  const isAccepted = data !== undefined && accepted === data.match_id
+  const isAccepted = data !== undefined && data.match_id !== null && accepted === data.match_id
 
   const accept = async () => {
-    if (!data) return
+    if (!data || data.match_id === null) return
     setAcceptError(null)
     try {
       await acceptMatch(data.match_id)
@@ -73,7 +85,12 @@ export default function CabMatches({
 
   return (
     <div className="matches">
-      <h3>Co-travellers going your way</h3>
+      <h3>
+        Co-travellers going your way
+        {data && !data.paused && (
+          <span className="tag soft">{data.strategy === 'time_window' ? 'flexible match' : 'exact match'}</span>
+        )}
+      </h3>
       <div className="match-controls">
         <span className="muted small">Leaving</span>
         {WINDOWS.map((w, i) => (
@@ -82,24 +99,41 @@ export default function CabMatches({
           </button>
         ))}
       </div>
-      <div className="match-controls">
-        <span className="muted small">Match</span>
-        {(['exact', 'time_window'] as const).map((s) => (
-          <button key={s} className={`km ${s === strategy ? 'on' : ''}`} onClick={() => setStrategy(s)}>
-            {s === 'exact' ? 'Same day' : '±1 day, flexible time'}
-          </button>
-        ))}
-        <span className="muted small">(Flagsmith will choose this)</span>
-      </div>
+      {allowOverride && (
+        <div className="match-controls">
+          <span className="muted small">Match</span>
+          {(['exact', 'time_window'] as const).map((s) => (
+            <button
+              key={s}
+              className={`km ${s === activeStrategy ? 'on' : ''}`}
+              onClick={() => setStrategyOverride(s)}
+            >
+              {s === 'exact' ? 'Exact: your station, same day' : 'Flexible: nearby stations, ±1 day'}
+            </button>
+          ))}
+          {strategyOverride && (
+            <button className="link small" onClick={() => setStrategyOverride(null)}>
+              Use Flagsmith
+            </button>
+          )}
+        </div>
+      )}
 
       {!settled && <p className="muted">Looking for co-travellers…</p>}
       {settled?.error && <p className="error">Matching failed: {settled.error}</p>}
 
-      {data && data.matches.length === 0 && (
-        <p className="muted">No co-travellers for this window yet. Try another time, or the flexible option.</p>
+      {data?.paused && (
+        <p className="warn">
+          Co-traveller matching is paused during peak Tatkal load (Level 3) to protect train search. Please try again in{' '}
+          {data.retry_after_s ?? 60} seconds.
+        </p>
       )}
 
-      {data && data.matches.length > 0 && (
+      {data && !data.paused && data.matches.length === 0 && (
+        <p className="muted">No co-travellers for this window yet. Try another time window.</p>
+      )}
+
+      {data && !data.paused && data.matches.length > 0 && (
         <>
           <p>
             <strong>{data.offered}</strong> co-traveller{data.offered > 1 ? 's' : ''} found.
@@ -118,9 +152,23 @@ export default function CabMatches({
                 </span>
                 <div className="option-main">
                   <strong>{m.name}</strong>
-                  {m.shift === 'flexible' && <span className="chip dist"> flexible</span>}
                   <div className="muted small">
                     {m.pickup.name} → {m.drop.name}
+                  </div>
+                  <div className="fit">
+                    {m.shift === 'exact' ? (
+                      <span className="chip ok">exact fit</span>
+                    ) : (
+                      <>
+                        {m.pickup_km > 0 && <span className="chip dist">{m.pickup_km} km from your station</span>}
+                        {m.day_shift !== 0 && (
+                          <span className="chip dist">
+                            {m.day_shift > 0 ? `${m.day_shift} day later` : `${-m.day_shift} day earlier`}
+                          </span>
+                        )}
+                        {m.time_gap_min > 0 && <span className="chip dist">{span(m.time_gap_min)} apart</span>}
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="option-side muted small">

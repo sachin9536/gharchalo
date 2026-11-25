@@ -1,5 +1,9 @@
 .venv/
+# Local settings and secrets never go into an image (.env.local holds the local Flagsmith key).
 .env
+.env.*
+!.env.example
+flagsmith_env.json
 *.db
 __pycache__/
 .pytest_cache/

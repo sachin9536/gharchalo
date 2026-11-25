@@ -129,6 +129,18 @@ export default function Connections({
   onShow: () => void
   loading: boolean
 }) {
+  if (data.connections_paused) {
+    return (
+      <section className="card">
+        <h2>Journeys with changes</h2>
+        <p className="warn">
+          Multi-leg planning is temporarily paused during high Tatkal demand (Level {data.tatkal_level}) to keep direct search
+          fast.
+        </p>
+      </section>
+    )
+  }
+
   if (data.connections_reason === null) {
     if (loading) {
       return (
