@@ -1,0 +1,59 @@
+docker-compose.yml
+  s_4a7049789034c6::t_718efae6ed1dfe 1-67
+api/seed.py
+  s_4a7049789034c6::t_ed156516e53c63 252-281,283-284,287-303
+README.md
+  s_4a7049789034c6::t_99f1cebe725be1 6-30
+CONTEXT.md
+  s_4a7049789034c6::t_e17054e7cf381b 22,25-26,29,33-43,269-272,278-281,307-308
+api/.dockerignore
+  s_4a7049789034c6::t_20ba0e4adb3e19 1-7
+api/Dockerfile
+  s_4a7049789034c6::t_5ca3e064da2a88 1-18
+api/tests/test_seed.py
+  s_4a7049789034c6::t_2aa4e9b0a3b079 192-200
+deploy/helm/gharchalo/Chart.yaml
+  s_4a7049789034c6::t_70dffc98d95b4c 1-6
+deploy/helm/gharchalo/templates/NOTES.txt
+  s_4a7049789034c6::t_cde2902dad640c 1-19
+deploy/helm/gharchalo/templates/_helpers.tpl
+  s_4a7049789034c6::t_eba26eacb353bc 1-35
+deploy/helm/gharchalo/templates/api.yaml
+  s_4a7049789034c6::t_adb5cac38b3bf9 1-80
+deploy/helm/gharchalo/templates/postgres.yaml
+  s_4a7049789034c6::t_e175c79e7dce34 1-88
+deploy/helm/gharchalo/templates/secrets.yaml
+  s_4a7049789034c6::t_ae6bee3377f7b8 1-22
+deploy/helm/gharchalo/templates/seed-job.yaml
+  s_4a7049789034c6::t_114e55ab89d21e 1-36
+deploy/helm/gharchalo/templates/web.yaml
+  s_4a7049789034c6::t_88002ac1b2ae07 1-51
+deploy/helm/gharchalo/values.yaml
+  s_4a7049789034c6::t_f6ec6dfc598911 1-61
+deploy/k8s-down.sh
+  s_4a7049789034c6::t_dd457594224aa3 1-7
+deploy/k8s-up.sh
+  s_4a7049789034c6::t_a763a2bc0ff457 1-71
+web/.dockerignore
+  s_4a7049789034c6::t_447c26fa567d76 1-3
+web/Dockerfile
+  s_4a7049789034c6::t_9d298d767584c8 1-14
+web/nginx.conf.template
+  s_4a7049789034c6::t_1b0af225d473dd 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "40a7648cd1c003e1ffb175916f318d4fa0e4a682",
+  "prompts": {},
+  "sessions": {
+    "s_4a7049789034c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a717cae5-ae45-4163-844e-fcfe44f023b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sachin Choudhary <sachinchoudharyxyz9@gmail.com>"
+    }
+  }
+}
