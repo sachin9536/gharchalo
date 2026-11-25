@@ -2,7 +2,20 @@ import { useState } from 'react'
 import type { Option, SearchResponse } from './api'
 import CabMatches from './CabMatches'
 import Connections from './Connections'
-import { chain, clock, dayOffset, dayStamp, inr, shortDate, span, via } from './format'
+import {
+  DAY_PARTS,
+  MODE_ICON,
+  chain,
+  clock,
+  dayOffset,
+  dayPart,
+  dayStamp,
+  inr,
+  shortDate,
+  span,
+  via,
+  type DayPart,
+} from './format'
 
 const DISTANCE_CHOICES = [5, 15, 30]
 
@@ -26,26 +39,36 @@ const COMPARE: Record<Sort, (a: Option, b: Option) => number> = {
 
 const available = (o: Option) => o.status === 'available'
 
-function OptionRow({ o, showOrigin }: { o: Option; showOrigin?: boolean }) {
+function OptionRow({ o, showOrigin, badges = [] }: { o: Option; showOrigin?: boolean; badges?: string[] }) {
   const plus = dayOffset(o.depart_at, o.arrive_at)
   return (
     <li className={`option ${o.status}`}>
       <div className="option-main">
-        <span className={`mode ${o.mode}`}>{o.mode === 'train' ? 'Train' : 'Bus'}</span>
+        <span className={`mode ${o.mode}`}>
+          {MODE_ICON[o.mode]} {o.mode === 'train' ? 'Train' : 'Bus'}
+        </span>
         {o.distance_km != null && <span className="chip dist">{o.distance_km} km away</span>}
+        {badges.map((b) => (
+          <span key={b} className="chip best">
+            {b}
+          </span>
+        ))}
         <strong>{o.name}</strong>
         <span className="muted">
           {' '}
           {o.number} · {o.travel_class}
         </span>
+        <div className="row-times">
+          <strong>{clock(o.depart_at)}</strong> → <strong>{clock(o.arrive_at)}</strong>
+          {plus > 0 && <sup>+{plus}</sup>}
+          <span className="muted"> · {span(o.duration_minutes)}</span>
+        </div>
         <div className="muted small">
-          {showOrigin && <>from {o.origin.name} · </>}
-          {clock(o.depart_at)} → {clock(o.arrive_at)}
-          {plus > 0 && <sup>+{plus}</sup>} · {span(o.duration_minutes)} · to {o.destination.name}
+          {showOrigin ? `from ${o.origin.name} ` : ''}to {o.destination.name}
         </div>
       </div>
       <div className="option-side">
-        <div className="fare">{inr(o.fare)}</div>
+        <div className="fare big">{inr(o.fare)}</div>
         {available(o) ? (
           <span className="chip ok">{o.seats_available} seats</span>
         ) : (
@@ -66,7 +89,7 @@ function bestPicks(data: SearchResponse): { quickest?: Pick; cheapest?: Pick } {
       arrive: o.arrive_at,
       fare: o.fare,
       tab: o.mode,
-      badge: o.mode === 'train' ? 'Train' : 'Bus',
+      badge: `${MODE_ICON[o.mode]} ${o.mode === 'train' ? 'Train' : 'Bus'}`,
     })),
     ...data.alternatives.map((o) => ({
       title: o.name,
@@ -74,7 +97,7 @@ function bestPicks(data: SearchResponse): { quickest?: Pick; cheapest?: Pick } {
       arrive: o.arrive_at,
       fare: o.fare,
       tab: 'nearby' as const,
-      badge: 'Nearby station',
+      badge: '🚆 Nearby station',
     })),
     ...data.connections.map((it) => ({
       title: chain(it),
@@ -125,6 +148,7 @@ export default function Results({
   onMaxKm,
   onShowConnections,
   onModify,
+  onNotify,
 }: {
   data: SearchResponse
   updating: boolean
@@ -132,14 +156,34 @@ export default function Results({
   onMaxKm: (km: number) => void
   onShowConnections: () => void
   onModify: () => void
+  onNotify: (message: string) => void
 }) {
   const [tab, setTab] = useState<Tab>('all')
   const [sort, setSort] = useState<Sort>('depart')
+  const [seatsOnly, setSeatsOnly] = useState(false)
+  const [part, setPart] = useState<DayPart>('any')
 
-  const trains = data.options.filter((o) => o.mode === 'train').sort(COMPARE[sort])
-  const buses = data.options.filter((o) => o.mode === 'bus').sort(COMPARE[sort])
-  const showNearby = !data.preferred_station_has_train_seats && trains.length > 0
+  const passes = (o: Option) => (!seatsOnly || available(o)) && (part === 'any' || dayPart(o.depart_at) === part)
+  const allTrains = data.options.filter((o) => o.mode === 'train')
+  const allBuses = data.options.filter((o) => o.mode === 'bus')
+  const trains = allTrains.filter(passes).sort(COMPARE[sort])
+  const buses = allBuses.filter(passes).sort(COMPARE[sort])
+  const hidden = allTrains.length + allBuses.length - trains.length - buses.length
+  const filtering = seatsOnly || part !== 'any'
+
+  const seatsCount = data.options.filter(available).length
+  const showNearby = !data.preferred_station_has_train_seats && allTrains.length > 0
   const { quickest, cheapest } = bestPicks(data)
+  const cab4 = data.cab.shares.find((s) => s.people === 4) ?? data.cab.shares[data.cab.shares.length - 1]
+
+  // "Cheapest" / "Fastest" badges, only when there is something to compare.
+  const bestBadges = new Map<number, string[]>()
+  const bookable = data.options.filter(available)
+  if (bookable.length > 1) {
+    const mark = (o: Option, label: string) => bestBadges.set(o.id, [...(bestBadges.get(o.id) ?? []), label])
+    mark(bookable.reduce((a, b) => (b.fare < a.fare ? b : a)), 'Cheapest')
+    mark(bookable.reduce((a, b) => (b.duration_minutes < a.duration_minutes ? b : a)), 'Fastest')
+  }
 
   const open = (t: Tab) => {
     setTab(t)
@@ -147,39 +191,73 @@ export default function Results({
   }
   const visible = (t: Tab) => tab === 'all' || tab === t
 
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      onNotify('Link copied. Paste it anywhere.')
+    } catch {
+      onNotify('Could not copy. Copy the link from the address bar.')
+    }
+  }
+  const whatsapp = () => {
+    const text = `${data.origin.city} → ${data.destination.city} on ${shortDate(data.date)}: trains, buses and shared cabs\n${window.location.href}`
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener')
+  }
+
   const tabs: { id: Tab; label: string; count?: number; hidden?: boolean }[] = [
-    { id: 'all', label: 'All' },
-    { id: 'train', label: 'Trains', count: trains.length },
-    { id: 'bus', label: 'Buses', count: buses.length },
-    { id: 'nearby', label: 'Nearby stations', count: data.alternatives.length, hidden: !showNearby },
+    { id: 'all', label: '✨ Overview' },
+    { id: 'train', label: '🚆 Trains', count: allTrains.length },
+    { id: 'bus', label: '🚌 Buses', count: allBuses.length },
+    { id: 'nearby', label: '📍 Nearby stations', count: data.alternatives.length, hidden: !showNearby },
     {
       id: 'changes',
-      label: 'With changes',
+      label: '🔀 With changes',
       count: data.connections_reason === null ? undefined : data.connections.length,
     },
-    { id: 'cab', label: 'Shared cab' },
+    { id: 'cab', label: '🚕 Shared cab' },
   ]
 
   return (
     <div className={`results ${updating ? 'updating' : ''}`}>
       <div className="routebar">
-        <div>
-          <strong>
-            {data.origin.city} → {data.destination.city}
-          </strong>
+        <div className="routebar-title">
+          <h2 className="route-h">
+            {data.origin.city} <span aria-hidden="true">→</span>
+            <span className="sr-only"> to </span> {data.destination.city}
+          </h2>
           <span className="muted small">
-            {' '}
-            · {shortDate(data.date)} · from {data.origin.name}
+            {shortDate(data.date)} · leaving from {data.origin.name}
           </span>
         </div>
         <div className="routebar-side">
           {updating && <span className="spinner" role="status" aria-label="Updating" />}
-          <span className="tag">simulated</span>
-          <button className="link" onClick={onModify}>
+          <button className="ghost" onClick={() => void copyLink()}>
+            🔗 Copy link
+          </button>
+          <button className="ghost wa" onClick={whatsapp}>
+            WhatsApp
+          </button>
+          <button className="ghost" onClick={onModify}>
             Change search
           </button>
         </div>
       </div>
+
+      <p className={`guide ${seatsCount > 0 ? 'good' : 'tip'}`}>
+        {seatsCount > 0 ? (
+          <>
+            <strong>
+              {seatsCount} direct option{seatsCount > 1 ? 's have' : ' has'} seats.
+            </strong>{' '}
+            Pick one below, or compare with a shared cab.
+          </>
+        ) : (
+          <>
+            <strong>No direct train or bus has seats.</strong> You still have options: nearby stations, journeys with
+            changes and a shared cab.
+          </>
+        )}
+      </p>
 
       <nav className="tabs" role="tablist" aria-label="Result types">
         {tabs
@@ -198,37 +276,36 @@ export default function Results({
           ))}
       </nav>
 
-      {tab === 'all' &&
-        (quickest ? (
-          <div className="picks">
-            <PickCard label="Quickest way home" pick={quickest} onOpen={open} />
-            {cheapest && <PickCard label="Cheapest with seats" pick={cheapest} onOpen={open} />}
-          </div>
-        ) : (
-          <section className="card picks-empty">
-            <p>
-              <strong>No direct train or bus has seats.</strong> You can still get home:
-            </p>
-            <div className="match-controls">
-              {showNearby && (
-                <button className="km" onClick={() => open('nearby')}>
-                  Trains from nearby stations
-                </button>
-              )}
-              <button className="km" onClick={() => open('changes')}>
-                Journeys with changes
-              </button>
-              <button className="km" onClick={() => open('cab')}>
-                Share a cab
-              </button>
-            </div>
-          </section>
-        ))}
+      {tab === 'all' && (
+        <div className="picks">
+          {quickest && <PickCard label="⚡ Quickest way home" pick={quickest} onOpen={open} />}
+          {cheapest && <PickCard label="💰 Cheapest with seats" pick={cheapest} onOpen={open} />}
+          <button className="pick cab-pick" onClick={() => open('cab')}>
+            <span className="pick-label">🚕 Split a cab</span>
+            <strong>{inr(cab4.per_person)} each</strong>
+            <span className="muted small">
+              With up to 3 co-travellers · about {data.cab.distance_km} km by road
+            </span>
+            <span className="pick-foot">Available any time between 05:00 and 22:30</span>
+            <span className="pick-go">Find co-travellers →</span>
+          </button>
+          {!quickest && (
+            <button className="pick" onClick={() => open(showNearby ? 'nearby' : 'changes')}>
+              <span className="pick-label">{showNearby ? '📍 Nearby stations' : '🔀 With changes'}</span>
+              <strong>{showNearby ? 'Trains with seats close by' : 'Combine trains, buses and cabs'}</strong>
+              <span className="muted small">
+                {showNearby ? `${data.alternatives.length} within ${maxKm} km` : 'We check timings for you'}
+              </span>
+              <span className="pick-go">See details →</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {(visible('train') || visible('bus')) && (
         <section className="card">
           <div className="card-head">
-            <h2>{tab === 'bus' ? 'Buses' : tab === 'train' ? 'Trains' : 'Direct'} from {data.origin.name}</h2>
+            <h2>{tab === 'bus' ? 'Buses' : tab === 'train' ? 'Trains' : 'Direct options'} from {data.origin.name}</h2>
             <label className="sort">
               <span className="muted small">Sort</span>
               <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
@@ -241,19 +318,38 @@ export default function Results({
             </label>
           </div>
 
+          <div className="filters">
+            <label className="switch">
+              <input type="checkbox" checked={seatsOnly} onChange={(e) => setSeatsOnly(e.target.checked)} />
+              <span>Seats available only</span>
+            </label>
+            <div className="chips" role="group" aria-label="Departure time">
+              {DAY_PARTS.map((p) => (
+                <button
+                  key={p.id}
+                  className={`km ${part === p.id ? 'on' : ''}`}
+                  aria-pressed={part === p.id}
+                  onClick={() => setPart(p.id)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {visible('train') && (
             <>
-              {tab === 'all' && <h3>Trains</h3>}
+              {tab === 'all' && <h3>🚆 Trains</h3>}
               {trains.length ? (
                 <ul className="options">
                   {trains.map((o) => (
-                    <OptionRow key={o.id} o={o} />
+                    <OptionRow key={o.id} o={o} badges={bestBadges.get(o.id)} />
                   ))}
                 </ul>
               ) : (
-                <p className="muted">No trains on this date.</p>
+                <p className="muted">{filtering ? 'No trains match these filters.' : 'No trains on this date.'}</p>
               )}
-              {showNearby && (
+              {showNearby && !filtering && (
                 <p className="nudge">
                   Every train from {data.origin.name} is waitlisted.{' '}
                   <button className="link" onClick={() => open('nearby')}>
@@ -266,24 +362,39 @@ export default function Results({
 
           {visible('bus') && (
             <>
-              {tab === 'all' && <h3>Buses</h3>}
+              {tab === 'all' && <h3>🚌 Buses</h3>}
               {buses.length ? (
                 <ul className="options">
                   {buses.map((o) => (
-                    <OptionRow key={o.id} o={o} />
+                    <OptionRow key={o.id} o={o} badges={bestBadges.get(o.id)} />
                   ))}
                 </ul>
               ) : (
-                <p className="muted">No buses on this route.</p>
+                <p className="muted">{filtering ? 'No buses match these filters.' : 'No buses on this route.'}</p>
               )}
             </>
+          )}
+
+          {filtering && hidden > 0 && (
+            <p className="muted small">
+              {hidden} option{hidden > 1 ? 's' : ''} hidden by filters.{' '}
+              <button
+                className="link"
+                onClick={() => {
+                  setSeatsOnly(false)
+                  setPart('any')
+                }}
+              >
+                Clear filters
+              </button>
+            </p>
           )}
         </section>
       )}
 
       {visible('nearby') && showNearby && (
         <section className="card">
-          <h2>Trains with seats from nearby stations</h2>
+          <h2>📍 Trains with seats from nearby stations</h2>
           <p className="warn">
             No train with seats leaves {data.origin.name}. Show stations within
             {DISTANCE_CHOICES.map((km) => (
@@ -305,7 +416,7 @@ export default function Results({
               ))}
             </ul>
           ) : (
-            <p className="muted">Nothing with seats within {maxKm} km.</p>
+            <p className="muted">Nothing with seats within {maxKm} km. Try a longer distance above.</p>
           )}
           {data.more_alternatives_beyond_limit > 0 && (
             <p className="muted small">
@@ -323,7 +434,7 @@ export default function Results({
       {visible('cab') && (
         <section className="card">
           <h2>
-            Shared cab <span className="tag">estimate</span>
+            🚕 Shared cab <span className="tag">estimate</span>
           </h2>
           <p>
             About {data.cab.distance_km} km by road, around <strong>{inr(data.cab.total_fare)}</strong> for the cab.

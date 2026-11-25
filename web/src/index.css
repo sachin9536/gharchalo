@@ -1,9 +1,10 @@
 :root {
   --bg: #fdf8f2;
+  --bg-2: #f7efe6;
   --card: #fff;
   --text: #1c1917;
-  --muted: #78716c;
-  --border: #ede7e0;
+  --muted: #6b645e;
+  --border: #ece4db;
   --accent: #c2410c; /* saffron */
   --accent-strong: #9a3412;
   --accent-soft: #ffedd5;
@@ -14,12 +15,15 @@
   --bad: #b91c1c;
   --warn-bg: #fef3c7;
   --warn-text: #92400e;
-  --radius: 14px;
-  --shadow: 0 1px 2px rgb(28 25 23 / 0.05), 0 4px 16px rgb(28 25 23 / 0.04);
+  --train: #1d4ed8;
+  --bus: #15803d;
+  --cab: #a16207;
+  --radius: 16px;
+  --shadow: 0 1px 2px rgb(28 25 23 / 0.05), 0 6px 20px rgb(28 25 23 / 0.05);
   font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
   color: var(--text);
   background: var(--bg);
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 * {
@@ -37,9 +41,22 @@ textarea {
   font: inherit;
 }
 
+button {
+  color: inherit;
+}
+
 :focus-visible {
   outline: 3px solid var(--gold);
   outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

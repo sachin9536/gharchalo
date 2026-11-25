@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchStations, type SearchQuery, type Station } from './api'
-import { POPULAR_ROUTES, SEED_DATES } from './demo'
+import { SEED_DATES } from './demo'
 import { chipDate } from './format'
 
 function StationSelect({
@@ -36,12 +36,14 @@ function StationSelect({
 export default function TypedSearch({
   value,
   labels,
+  recent,
   onChange,
   onSearch,
   disabled,
 }: {
   value: SearchQuery
   labels: Record<string, string>
+  recent: SearchQuery[]
   onChange: (q: SearchQuery) => void
   onSearch: (q: SearchQuery) => void
   disabled: boolean
@@ -56,6 +58,7 @@ export default function TypedSearch({
   }, [])
 
   const sameCity = value.origin === value.dest
+  const cityOf = (code: string) => stations.find((s) => s.code === code)?.city ?? labels[code] ?? code
 
   return (
     <div className="typed">
@@ -120,25 +123,26 @@ export default function TypedSearch({
       </form>
       {sameCity && <p className="warn">Pick two different cities.</p>}
 
-      <div className="popular">
-        <span className="muted small">Popular this festive season</span>
-        {POPULAR_ROUTES.map((r) => (
-          <button
-            key={`${r.origin}-${r.dest}`}
-            type="button"
-            className="pill"
-            disabled={disabled}
-            onClick={() => {
-              const q = { ...value, origin: r.origin, dest: r.dest }
-              onChange(q)
-              onSearch(q)
-            }}
-          >
-            {r.label}
-            {r.hint && <span className="muted"> · {r.hint}</span>}
-          </button>
-        ))}
-      </div>
+      {recent.length > 0 && (
+        <div className="recent">
+          <span className="muted small">Recent</span>
+          {recent.map((q) => (
+            <button
+              key={`${q.origin}-${q.dest}`}
+              type="button"
+              className="pill"
+              disabled={disabled}
+              onClick={() => {
+                onChange(q)
+                onSearch(q)
+              }}
+            >
+              {cityOf(q.origin)} → {cityOf(q.dest)}
+              <span className="muted"> · {chipDate(q.date)}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <p className="muted small">Demo data covers 26 Nov – 1 Dec 2026.</p>
     </div>
   )

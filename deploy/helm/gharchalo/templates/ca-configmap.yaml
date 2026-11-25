@@ -1,0 +1,11 @@
+{{- if .Values.api.caBundle }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gharchalo.fullname" . }}-ca
+  labels:
+    {{- include "gharchalo.labels" . | nindent 4 }}
+data:
+  corp-ca.pem: |
+    {{- .Values.api.caBundle | nindent 4 }}
+{{- end }}

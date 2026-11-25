@@ -3,6 +3,7 @@ import type { Itinerary, Leg } from './api'
 // Datetimes from the API are naive local ISO strings ("2026-11-27T21:40:00").
 
 export const MODE_LABEL: Record<Leg['mode'], string> = { train: 'Train', bus: 'Bus', cab: 'Shared cab' }
+export const MODE_ICON: Record<Leg['mode'], string> = { train: '🚆', bus: '🚌', cab: '🚕' }
 
 export const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`
 
@@ -53,4 +54,23 @@ export const chain = (it: Itinerary) => it.legs.map((l) => MODE_LABEL[l.mode]).j
 export function via(it: Itinerary) {
   const stops = it.legs.slice(0, -1).map((l) => l.destination.city)
   return stops.length ? `via ${stops.join(', ')}` : 'one leg'
+}
+
+export type DayPart = 'any' | 'morning' | 'afternoon' | 'evening' | 'night'
+
+export const DAY_PARTS: { id: DayPart; label: string }[] = [
+  { id: 'any', label: 'Any time' },
+  { id: 'morning', label: 'Morning' },
+  { id: 'afternoon', label: 'Afternoon' },
+  { id: 'evening', label: 'Evening' },
+  { id: 'night', label: 'Night' },
+]
+
+/** Morning 05-12, afternoon 12-17, evening 17-22, night 22-05 (by departure hour). */
+export function dayPart(iso: string): Exclude<DayPart, 'any'> {
+  const h = new Date(iso).getHours()
+  if (h >= 5 && h < 12) return 'morning'
+  if (h >= 12 && h < 17) return 'afternoon'
+  if (h >= 17 && h < 22) return 'evening'
+  return 'night'
 }

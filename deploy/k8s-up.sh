@@ -56,6 +56,11 @@ else
   echo "==> No SARVAM_API_KEY in api/.env: voice disabled (typed search works)"
 fi
 
+if [[ -f certs/corp-ca.pem ]]; then
+  extra+=(--set-file api.caBundle=certs/corp-ca.pem)
+  echo "==> certs/corp-ca.pem found: the API will trust your network's root CA"
+fi
+
 echo "==> Installing chart"
 helm upgrade --install "$RELEASE" deploy/helm/gharchalo -n "$NAMESPACE" --wait --timeout 5m \
   ${extra[@]+"${extra[@]}"} "$@"

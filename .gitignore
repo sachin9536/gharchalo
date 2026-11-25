@@ -7,3 +7,7 @@ dist/
 *.log
 *.db
 .DS_Store
+
+# Your network's root CA (see deploy/trust-corporate-ca.sh): never commit it
+certs/*
+!certs/.gitkeep

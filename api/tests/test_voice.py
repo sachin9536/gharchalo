@@ -175,3 +175,24 @@ def test_parse_text(monkeypatch):
 
 def test_healthz():
     assert client.get("/healthz").json()["status"] == "ok"
+
+
+# --- TLS trust -------------------------------------------------------------
+
+def test_custom_ca_bundle_is_added_to_the_default_certificates(monkeypatch):
+    import ssl
+
+    import certifi
+
+    system_only = ssl.create_default_context()
+    monkeypatch.setattr(config, "SARVAM_CA_BUNDLE", certifi.where())
+    client = sarvam._client()
+    ctx = client._transport._pool._ssl_context  # the context httpx will actually use
+    # Its trust store is the system defaults plus the bundle: at least as many certs as the defaults.
+    assert len(ctx.get_ca_certs()) >= len(system_only.get_ca_certs())
+
+
+def test_missing_ca_bundle_file_fails_loudly(monkeypatch):
+    monkeypatch.setattr(config, "SARVAM_CA_BUNDLE", "/nonexistent/ca.pem")
+    with pytest.raises(FileNotFoundError):
+        sarvam._client()

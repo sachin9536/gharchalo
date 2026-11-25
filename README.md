@@ -11,6 +11,8 @@ docker compose up --build       # Postgres + seed + API + web
 # open http://localhost:8080
 ```
 
+**Voice answers 502 behind a corporate proxy?** Run `deploy/trust-corporate-ca.sh` once, then `docker compose up -d --build` (details in `CONTEXT.md`).
+
 `docker compose down` stops it; `docker compose down -v` also wipes the database. Restarts never reseed
 (`seed.py --if-empty`). Use another port with `WEB_PORT=9090 docker compose up`.
 

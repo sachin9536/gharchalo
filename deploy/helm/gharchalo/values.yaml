@@ -23,6 +23,9 @@ api:
     apiKey: ""
     chatModel: sarvam-105b
     sttModel: "saaras:v3"
+  # PEM text of your network's root CA when a corporate proxy re-signs HTTPS (see
+  # deploy/trust-corporate-ca.sh). deploy/k8s-up.sh passes certs/corp-ca.pem automatically.
+  caBundle: ""
   # Extra env vars, e.g. [{name: SARVAM_TIMEOUT_SECONDS, value: "60"}]
   extraEnv: []
 

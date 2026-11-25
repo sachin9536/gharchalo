@@ -44,9 +44,13 @@ services:
         required: false
     environment:
       DATABASE_URL: *db-url  # overrides any DATABASE_URL in api/.env
-      SARVAM_CA_BUNDLE: ""   # a host path from api/.env would not exist in the container
+      # A host path in api/.env would not exist in the container, so this is set separately.
+      # Behind a corporate proxy run deploy/trust-corporate-ca.sh (it sets CONTAINER_CA_BUNDLE in ./.env).
+      SARVAM_CA_BUNDLE: ${CONTAINER_CA_BUNDLE:-}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+    volumes:
+      - ./certs:/certs:ro
     depends_on:
       seed:
         condition: service_completed_successfully

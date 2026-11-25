@@ -305,7 +305,7 @@ There is no app code to write for these; the knobs are config only.
 - **Postgres first start:** the container needs a few seconds before it accepts connections. Seeding instantly fails with "server closed the connection".
 - **`.env` is read at startup only:** restart uvicorn after editing it. `--reload` covers code, not `.env`.
 - **`seed.py` drops all tables** unless you pass `--if-empty` (the containers always do). Never point the plain command at anything you care about.
-- **Corporate proxy and Docker:** inside containers the API trusts Debian's CA store, not the macOS keychain. If Sarvam fails with a certificate error only in Docker/Kubernetes, mount the proxy's root CA and set `SARVAM_CA_BUNDLE` to its path in the container.
+- **Corporate proxy (Palo Alto SSL inspection) and Docker/Kubernetes:** containers don't trust the proxy's root certificate the way a Mac does, so `/voice` answers **502** (`CERTIFICATE_VERIFY_FAILED ... self-signed certificate in certificate chain`). Typed search is unaffected. Fix: run **`deploy/trust-corporate-ca.sh`** once (saves your network's root to the git-ignored `certs/corp-ca.pem` and sets `CONTAINER_CA_BUNDLE` in `./.env`), then `docker compose up -d --build`. `deploy/k8s-up.sh` picks the file up automatically. The certificate is added to the normal trusted CAs, so it also works off the corporate network.
 - **React StrictMode in dev** runs effects twice, so dev logs duplicate `/match` offers. Don't read the dev experiment counts as real.
 
 ---

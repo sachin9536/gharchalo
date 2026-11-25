@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   parseText,
   postVoice,
@@ -10,11 +10,14 @@ import {
   type VoiceResponse,
 } from './api'
 import { DEMO_DATE, EXAMPLE_PHRASES } from './demo'
-import { longDate } from './format'
+import { chipDate, longDate } from './format'
+import { loadRecent, saveRecent, withRecent } from './recent'
 import Results, { ResultsSkeleton } from './Results'
 import TypedSearch from './TypedSearch'
+import { readUrl, writeUrl } from './urlstate'
 import { MAX_RECORD_SECONDS, useRecorder } from './useRecorder'
 import { toWav16kMono } from './wav'
+import Welcome from './Welcome'
 import './App.css'
 
 type Status = { kind: 'idle' } | { kind: 'working'; step: string } | { kind: 'error'; message: string }
@@ -72,18 +75,24 @@ function Stepper({ stage }: { stage: number }) {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('speak')
+  // A search can arrive in the URL (shared link, refresh).
+  const [initial] = useState(readUrl)
+  const [mode, setMode] = useState<Mode>(initial.query ? 'type' : 'speak')
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [result, setResult] = useState<VoiceResponse | null>(null)
   const [edited, setEdited] = useState('')
   // The typed form mirrors whatever was searched last, including voice searches.
-  const [form, setForm] = useState<SearchQuery>({ origin: 'SBC', dest: 'HYB', date: DEMO_DATE })
+  const [form, setForm] = useState<SearchQuery>(initial.query ?? { origin: 'SBC', dest: 'HYB', date: DEMO_DATE })
   const [labels, setLabels] = useState<Record<string, string>>({})
-  const [query, setQuery] = useState<SearchQuery | null>(null)
+  const [query, setQuery] = useState<SearchQuery | null>(initial.query)
   // Temporary: Flagsmith's 5 / 15 / 30 km cohort will set this per user.
-  const [maxKm, setMaxKm] = useState(15)
+  const [maxKm, setMaxKm] = useState(initial.km)
   const [withConnections, setWithConnections] = useState(false)
   const [outcome, setOutcome] = useState<SearchOutcome | null>(null)
+  const [recent, setRecent] = useState<SearchQuery[]>(loadRecent)
+  const [editing, setEditing] = useState(false) // small screens: search form expanded again
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<number | undefined>(undefined)
 
   // Results are stored with the key they answer, so "idle" and "loading" are
   // derived (no outcome for the current key yet) rather than set inside the effect.
@@ -107,6 +116,23 @@ export default function App() {
     return () => controller.abort()
   }, [query, maxKm, withConnections, searchKey, route])
 
+  // Keep the address bar in step with the search, so it can be shared.
+  useEffect(() => {
+    writeUrl(query, maxKm)
+  }, [query, maxKm])
+
+  const notify = useCallback((message: string) => {
+    setToast(message)
+    window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600)
+  }, [])
+
+  // Functional update, so callers that captured an older render never overwrite newer history.
+  const remember = (q: SearchQuery) => setRecent((prev) => withRecent(prev, q))
+  useEffect(() => {
+    saveRecent(recent)
+  }, [recent])
+
   const show = (r: VoiceResponse) => {
     setResult(r)
     setEdited(r.transcript)
@@ -114,8 +140,10 @@ export default function App() {
     const q = journeyQuery(r.journey)
     setQuery(q)
     setWithConnections(false)
+    setEditing(false)
     if (q) {
       setForm(q)
+      remember(q)
       const named: Record<string, string> = {}
       for (const s of [r.journey.origin, r.journey.destination]) {
         if (s?.code && s.name) named[s.code] = s.name
@@ -130,6 +158,8 @@ export default function App() {
     setForm(q)
     setQuery(q)
     setWithConnections(false)
+    setEditing(false)
+    remember(q)
   }
   const fail = (e: unknown) =>
     setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -182,12 +212,17 @@ export default function App() {
 
   const modify = () => {
     setMode('type')
+    setEditing(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const j = result?.journey
   const ready = j && j.missing.length === 0
   const stage = recording ? 0 : busy ? 1 : result && searching && !shown ? 2 : null
+  const hasSearched = query !== null || result !== null
+  const compact = hasSearched && !editing
+  const empty = !hasSearched && !busy && !recording
+  const summaryRoute = shown ? `${shown.origin.city} → ${shown.destination.city}` : query ? `${query.origin} → ${query.dest}` : 'Your search'
 
   return (
     <>
@@ -199,124 +234,160 @@ export default function App() {
             </span>
             <h1>GharChalo</h1>
           </div>
-          <p>Festive season travel, made simple. Tell us where home is, we'll find the way.</p>
+          <p className="tagline">Festive season travel, made simple. Tell us where home is, we'll find the way.</p>
+          <ul className="trust">
+            <li>🚆 Trains</li>
+            <li>🚌 Buses</li>
+            <li>🚕 Shared cabs</li>
+            <li>🗣 Hindi, Hinglish, English</li>
+          </ul>
         </div>
       </header>
 
-      <main>
-        <section className="card search-card">
-          <div className="segmented" role="tablist" aria-label="How do you want to search?">
-            <button role="tab" aria-selected={mode === 'speak'} className={mode === 'speak' ? 'on' : ''} onClick={() => setMode('speak')}>
-              🎙 Speak
-            </button>
-            <button role="tab" aria-selected={mode === 'type'} className={mode === 'type' ? 'on' : ''} onClick={() => setMode('type')}>
-              ⌨️ Type
-            </button>
-          </div>
-
-          {mode === 'speak' ? (
-            <div className="speak">
-              <button
-                className={`mic-orb ${recording ? 'recording' : ''}`}
-                onClick={recording ? recorder.stop : () => void recorder.start()}
-                disabled={busy}
-                aria-label={recording ? 'Stop recording' : 'Start recording'}
-              >
-                <span aria-hidden="true">{recording ? '■' : '🎙'}</span>
-              </button>
-              <p className="mic-label">
-                {recording
-                  ? `Listening… ${recorder.seconds}s of ${MAX_RECORD_SECONDS}s. Tap to stop.`
-                  : status.kind === 'working'
-                    ? status.step
-                    : 'Tap and say where you want to go'}
-              </p>
-              <p className="muted small">Hindi, Hinglish, English and other Indian languages</p>
-              <div className="try">
-                <span className="muted small">No microphone? Tap a sentence to try it:</span>
-                {EXAMPLE_PHRASES.map((p) => (
-                  <button key={p} className="pill phrase" onClick={() => tryPhrase(p)} disabled={busy || recording}>
-                    “{p}”
-                  </button>
-                ))}
-              </div>
-              <label className={`upload ${busy || recording ? 'disabled' : ''}`}>
-                or upload a recording
-                <input type="file" accept="audio/*" onChange={onFile} disabled={busy || recording} />
-              </label>
-            </div>
-          ) : (
-            <TypedSearch value={form} labels={labels} onChange={setForm} onSearch={searchTyped} disabled={busy} />
-          )}
-        </section>
-
-        {stage !== null && <Stepper stage={stage} />}
-        {recorder.error && <p className="error">{recorder.error}</p>}
-        {status.kind === 'error' && <p className="error">{status.message}</p>}
-
-        {result && j && (
-          <section className="card heard">
-            <div className="card-head">
-              <h2>We understood</h2>
+      <div className="layout">
+        <aside className={`panel ${compact ? 'compact' : ''}`}>
+          {compact && (
+            <button className="panel-summary" onClick={() => setEditing(true)} aria-label="Edit your search">
               <span>
-                {result.source === 'stub' && <span className="tag">load-test stub</span>}
-                {result.language_code && <span className="tag soft">{result.language_code}</span>}
+                <strong>{summaryRoute}</strong>
+                {query && <span className="muted small"> · {chipDate(query.date)}</span>}
               </span>
-            </div>
-            <textarea value={edited} onChange={(e) => setEdited(e.target.value)} rows={2} aria-label="Transcript" />
-            <div className="actions">
-              <button onClick={() => void understand(edited)} disabled={busy || !edited.trim() || edited === result.transcript}>
-                Fix the text and retry
+              <span className="edit-link">Edit</span>
+            </button>
+          )}
+
+          <section className="card search-card">
+            <div className="segmented" role="tablist" aria-label="How do you want to search?">
+              <button role="tab" aria-selected={mode === 'speak'} className={mode === 'speak' ? 'on' : ''} onClick={() => setMode('speak')}>
+                🎙 Speak
               </button>
-              <span className="muted small">Misheard something? Edit it, then retry.</span>
+              <button role="tab" aria-selected={mode === 'type'} className={mode === 'type' ? 'on' : ''} onClick={() => setMode('type')}>
+                ⌨️ Type
+              </button>
             </div>
-            <div className="journey-grid">
-              <StationLine label="From" station={j.origin} />
-              <StationLine label="To" station={j.destination} />
-              <div className="row">
-                <span className="label">Date</span>
-                {j.date ? <strong>{longDate(j.date)}</strong> : <span className="bad">not understood</span>}
+
+            {mode === 'speak' ? (
+              <div className="speak">
+                <button
+                  className={`mic-orb ${recording ? 'recording' : ''}`}
+                  onClick={recording ? recorder.stop : () => void recorder.start()}
+                  disabled={busy}
+                  aria-label={recording ? 'Stop recording' : 'Start recording'}
+                >
+                  <span aria-hidden="true">{recording ? '■' : '🎙'}</span>
+                </button>
+                <p className="mic-label">
+                  {recording
+                    ? `Listening… ${recorder.seconds}s of ${MAX_RECORD_SECONDS}s. Tap to stop.`
+                    : status.kind === 'working'
+                      ? status.step
+                      : 'Tap and say where you want to go'}
+                </p>
+                <p className="muted small">Hindi, Hinglish, English and other Indian languages</p>
+                <details className="try">
+                  <summary>No microphone? Try an example</summary>
+                  {EXAMPLE_PHRASES.map((p) => (
+                    <button key={p} className="pill phrase" onClick={() => tryPhrase(p)} disabled={busy || recording}>
+                      “{p}”
+                    </button>
+                  ))}
+                </details>
+                <label className={`upload ${busy || recording ? 'disabled' : ''}`}>
+                  or upload a recording
+                  <input type="file" accept="audio/*" onChange={onFile} disabled={busy || recording} />
+                </label>
               </div>
-              <div className="row">
-                <span className="label">If no train</span>
-                <span>{FALLBACK_LABEL[j.fallback_mode]}</span>
-              </div>
-            </div>
-            {j.warnings.map((w) => (
-              <p className="warn" key={w}>
-                {w}
-              </p>
-            ))}
-            {!ready && <p className="warn">Missing: {j.missing.join(', ')}. Edit the text above and retry.</p>}
+            ) : (
+              <TypedSearch
+                value={form}
+                labels={labels}
+                recent={recent}
+                onChange={setForm}
+                onSearch={searchTyped}
+                disabled={busy}
+              />
+            )}
           </section>
-        )}
+        </aside>
 
-        {searching && !shown && <ResultsSkeleton />}
-        {settled?.error && <p className="error">Search failed: {settled.error}</p>}
-        {shown && route && (
-          <Results
-            key={route}
-            data={shown}
-            updating={searching}
-            maxKm={maxKm}
-            onMaxKm={setMaxKm}
-            onShowConnections={() => setWithConnections(true)}
-            onModify={modify}
-          />
-        )}
+        <div className="content">
+          {stage !== null && <Stepper stage={stage} />}
+          {recorder.error && <p className="error">{recorder.error}</p>}
+          {status.kind === 'error' && <p className="error">{status.message}</p>}
 
-        {j && (
-          <details className="card raw">
-            <summary>Developer view: journey JSON</summary>
-            <pre>{JSON.stringify(j, null, 2)}</pre>
-          </details>
-        )}
+          {result && j && (
+            <section className="card heard">
+              <div className="card-head">
+                <h2>🗣 We understood</h2>
+                <span>
+                  {result.source === 'stub' && <span className="tag">load-test stub</span>}
+                  {result.language_code && <span className="tag soft">{result.language_code}</span>}
+                </span>
+              </div>
+              <textarea value={edited} onChange={(e) => setEdited(e.target.value)} rows={2} aria-label="Transcript" />
+              <div className="actions">
+                <button onClick={() => void understand(edited)} disabled={busy || !edited.trim() || edited === result.transcript}>
+                  Fix the text and retry
+                </button>
+                <span className="muted small">Misheard something? Edit it, then retry.</span>
+              </div>
+              <div className="journey-grid">
+                <StationLine label="From" station={j.origin} />
+                <StationLine label="To" station={j.destination} />
+                <div className="row">
+                  <span className="label">Date</span>
+                  {j.date ? <strong>{longDate(j.date)}</strong> : <span className="bad">not understood</span>}
+                </div>
+                <div className="row">
+                  <span className="label">If no train</span>
+                  <span>{FALLBACK_LABEL[j.fallback_mode]}</span>
+                </div>
+              </div>
+              {j.warnings.map((w) => (
+                <p className="warn" key={w}>
+                  {w}
+                </p>
+              ))}
+              {!ready && <p className="warn">Missing: {j.missing.join(', ')}. Edit the text above and retry.</p>}
+            </section>
+          )}
 
-        <footer className="foot muted small">
-          All trains, buses, fares and travellers shown here are simulated for FestiveHacks 2026. They are not live IRCTC or
-          operator data.
-        </footer>
-      </main>
+          {searching && !shown && <ResultsSkeleton />}
+          {settled?.error && <p className="error">Search failed: {settled.error}</p>}
+          {shown && route && (
+            <Results
+              key={route}
+              data={shown}
+              updating={searching}
+              maxKm={maxKm}
+              onMaxKm={setMaxKm}
+              onShowConnections={() => setWithConnections(true)}
+              onModify={modify}
+              onNotify={notify}
+            />
+          )}
+
+          {empty && <Welcome date={form.date} onPick={searchTyped} disabled={busy} />}
+
+          {j && (
+            <details className="card raw">
+              <summary>Developer view: journey JSON</summary>
+              <pre>{JSON.stringify(j, null, 2)}</pre>
+            </details>
+          )}
+        </div>
+      </div>
+
+      <footer className="foot muted small">
+        All trains, buses, fares and travellers shown here are simulated for FestiveHacks 2026. They are not live IRCTC or
+        operator data.
+      </footer>
+
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
+        </div>
+      )}
     </>
   )
 }

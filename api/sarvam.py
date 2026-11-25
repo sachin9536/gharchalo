@@ -26,14 +26,20 @@ log = logging.getLogger("gharchalo.sarvam")
 
 
 def _client() -> httpx.AsyncClient:
-    """HTTP client that still verifies certificates, but against the OS trust
-    store (macOS keychain). Behind a corporate VPN/proxy that re-signs HTTPS,
-    its root CA lives there and not in Python's bundled certifi list. If the CA
-    is only available as a file, set SARVAM_CA_BUNDLE to its path.
+    """HTTP client that still verifies certificates.
+
+    Default: the OS trust store (macOS keychain, Windows store), via truststore.
+    Behind a corporate VPN/proxy that re-signs HTTPS, that is where its root CA
+    lives, and not in Python's bundled certifi list.
+
+    SARVAM_CA_BUNDLE (a PEM file with that root CA) is for places without such a
+    store, e.g. a container. It is ADDED to the system certificates, so the same
+    setting keeps working when you leave the corporate network.
     """
-    verify: ssl.SSLContext | str
+    verify: ssl.SSLContext
     if config.SARVAM_CA_BUNDLE:
-        verify = config.SARVAM_CA_BUNDLE
+        verify = ssl.create_default_context()  # loads the system's default CAs
+        verify.load_verify_locations(cafile=config.SARVAM_CA_BUNDLE)
     else:
         verify = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     return httpx.AsyncClient(timeout=config.SARVAM_TIMEOUT_SECONDS, verify=verify)
