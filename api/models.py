@@ -72,3 +72,39 @@ class MatchEvent(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=lambda: dt.datetime.now(dt.UTC).replace(tzinfo=None)
     )
+
+
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC).replace(tzinfo=None)
+
+
+class SearchEvent(Base):
+    """Experiment B log: one row per search where the preferred station had no train seats
+    (the only case where nearby-station alternatives are shown)."""
+
+    __tablename__ = "search_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    cohort_km: Mapped[int] = mapped_column(Integer, index=True)
+    origin_code: Mapped[str] = mapped_column(String(8))
+    dest_code: Mapped[str] = mapped_column(String(8))
+    travel_date: Mapped[dt.date] = mapped_column(Date)
+    alternatives_shown: Mapped[int] = mapped_column(Integer)
+    beyond_limit: Mapped[int] = mapped_column(Integer)
+    tatkal_level: Mapped[int] = mapped_column(Integer, default=0)
+    urgent: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class AlternativeSelection(Base):
+    """Experiment B log: the user picked a train from a nearby station."""
+
+    __tablename__ = "alternative_selections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    search_event_id: Mapped[int] = mapped_column(ForeignKey("search_events.id"), index=True)
+    service_id: Mapped[int] = mapped_column(Integer)
+    station_code: Mapped[str] = mapped_column(String(8))
+    extra_km: Mapped[float] = mapped_column(Float)  # preferred station -> chosen station
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)

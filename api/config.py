@@ -37,3 +37,20 @@ DATABASE_URL = _get("DATABASE_URL", "postgresql+psycopg://gharchalo:gharchalo@lo
 DB_POOL_SIZE = int(_get("DB_POOL_SIZE", "10"))
 DB_MAX_OVERFLOW = int(_get("DB_MAX_OVERFLOW", "10"))
 DB_POOL_TIMEOUT_SECONDS = float(_get("DB_POOL_TIMEOUT_SECONDS", "10"))
+
+# Flagsmith (see flags.py). Empty key -> every flag uses its safe default.
+FLAGSMITH_SERVER_KEY = _get("FLAGSMITH_SERVER_KEY")  # server-side key, starts with "ser."
+FLAGSMITH_API_URL = _get("FLAGSMITH_API_URL")  # only for self-hosted Flagsmith
+FLAGSMITH_REFRESH_SECONDS = int(_get("FLAGSMITH_REFRESH_SECONDS", "10"))  # how fast dashboard changes land
+FLAGSMITH_OFFLINE_FILE = _get("FLAGSMITH_OFFLINE_FILE")  # saved environment document (tests / no wifi)
+
+# Lets the request override a flag (?max_station_distance_km=, "strategy" on /match).
+# Handy for local dev and the existing tests; set to 0 on the demo cluster so
+# Flagsmith alone decides cohorts.
+ALLOW_FLAG_OVERRIDE = _get("ALLOW_FLAG_OVERRIDE", "1").lower() in ("1", "true", "yes")
+
+# Pretend "now" (ISO, e.g. 2026-11-25T10:00) for the urgent_travellers 48h window.
+DEMO_NOW = _get("DEMO_NOW")
+
+# How long a simulated Sarvam timeout (sarvam_fault_mode=timeout) hangs before failing.
+SIMULATED_SARVAM_TIMEOUT_SECONDS = float(_get("SIMULATED_SARVAM_TIMEOUT_SECONDS", "5"))

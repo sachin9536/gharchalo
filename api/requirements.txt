@@ -7,3 +7,5 @@ pytest>=8.0
 truststore>=0.10
 sqlalchemy>=2.0
 psycopg[binary]>=3.2
+flagsmith>=3.8
+prometheus-client>=0.20

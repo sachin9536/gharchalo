@@ -968,3 +968,18 @@ textarea {
     flex-basis: 70px;
   }
 }
+
+/* ---------- Flagsmith banners & alternative selection ---------- */
+
+.banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.select-alt {
+  margin: 6px 0 0;
+  font-size: 12px;
+}

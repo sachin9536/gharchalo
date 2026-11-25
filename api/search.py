@@ -73,6 +73,11 @@ class SearchResponse(BaseModel):
     # seats ("no_direct") or when the caller asks for them ("requested").
     connections: list[ItineraryOut] = []
     connections_reason: Literal["no_direct", "requested"] | None = None
+    # Flagsmith fields (additive; older clients can ignore them).
+    connections_paused: bool = False  # tatkal_level >= 2 skips the multi-leg planner
+    served_from: Literal["live", "cache"] = "live"  # tatkal_level 3 serves a short-lived cache
+    tatkal_level: int = 0
+    search_id: int | None = None  # logged Experiment B impression; POST /search/{id}/select
 
 
 def _station_out(s: models.Station) -> StationOut:
@@ -117,6 +122,7 @@ def search(
     date: dt.date,
     max_station_distance_km: int,
     include_connections: bool = False,
+    allow_connections: bool = True,
 ) -> SearchResponse:
     stations = {s.code: s for s in session.scalars(select(models.Station))}
     if origin_code not in stations:
@@ -175,7 +181,9 @@ def search(
 
     # Journeys with changes: only when asked, or when nothing direct has seats.
     reason: Literal["no_direct", "requested"] | None = None
-    if include_connections:
+    if not allow_connections:
+        reason = None  # degraded: the planner is CPU-heavy (tatkal_level >= 2)
+    elif include_connections:
         reason = "requested"
     elif not any(s.seats_available > 0 for s in preferred):
         reason = "no_direct"
@@ -204,4 +212,5 @@ def search(
         cab=_cab_estimate(origin, dest),
         connections=itineraries,
         connections_reason=reason,
+        connections_paused=not allow_connections,
     )

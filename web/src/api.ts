@@ -1,5 +1,7 @@
 // Mirrors api/main.py, api/journey.py and api/search.py.
 
+import { getUserId } from './user'
+
 export type StationRef = { spoken: string; code: string | null; name: string | null }
 
 export type Journey = {
@@ -81,6 +83,10 @@ export type SearchResponse = {
   more_alternatives_beyond_limit: number
   connections: Itinerary[]
   connections_reason: 'no_direct' | 'requested' | null
+  connections_paused: boolean
+  served_from: 'live' | 'cache'
+  tatkal_level: number
+  search_id: number | null
   cab: {
     distance_km: number
     total_fare: number
@@ -89,7 +95,22 @@ export type SearchResponse = {
   }
 }
 
+export type ClientConfig = {
+  tatkal_level: number
+  poll_s: number
+  interaction_mode: 'voice' | 'text_only'
+  cohort_km: number
+  matching_strategy: Strategy
+  urgent: boolean
+  flags_source: 'identity' | 'environment' | 'defaults'
+  allow_override: boolean
+}
+
 export type SearchQuery = { origin: string; dest: string; date: string }
+
+function userHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { 'X-User-Id': getUserId(), ...extra }
+}
 
 async function json<T>(resp: Response): Promise<T> {
   if (resp.ok) return resp.json()
@@ -103,29 +124,34 @@ async function json<T>(resp: Response): Promise<T> {
   throw new Error(detail)
 }
 
+export async function fetchConfig(date?: string, signal?: AbortSignal): Promise<ClientConfig> {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : ''
+  return json(await fetch(`/api/config${qs}`, { headers: userHeaders(), signal }))
+}
+
 export async function postVoice(audio: Blob, filename: string): Promise<VoiceResponse> {
   const form = new FormData()
   form.append('file', audio, filename)
-  return json(await fetch('/api/voice', { method: 'POST', body: form }))
+  return json(await fetch('/api/voice', { method: 'POST', headers: userHeaders(), body: form }))
 }
 
 export async function parseText(text: string): Promise<VoiceResponse> {
   return json(
     await fetch('/api/journey/parse', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: userHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ text }),
     }),
   )
 }
 
 export async function fetchStations(): Promise<Station[]> {
-  return json(await fetch('/api/stations'))
+  return json(await fetch('/api/stations', { headers: userHeaders() }))
 }
 
 export async function searchJourneys(
   q: SearchQuery,
-  maxStationDistanceKm: number,
+  maxStationDistanceKm: number | null,
   includeConnections: boolean,
   signal?: AbortSignal,
 ): Promise<SearchResponse> {
@@ -133,10 +159,25 @@ export async function searchJourneys(
     origin: q.origin,
     dest: q.dest,
     date: q.date,
-    max_station_distance_km: String(maxStationDistanceKm),
     include_connections: String(includeConnections),
   })
-  return json(await fetch(`/api/search?${params}`, { signal }))
+  if (maxStationDistanceKm !== null) {
+    params.set('max_station_distance_km', String(maxStationDistanceKm))
+  }
+  return json(await fetch(`/api/search?${params}`, { headers: userHeaders(), signal }))
+}
+
+export async function selectAlternative(
+  searchId: number,
+  serviceId: number,
+): Promise<{ search_id: number; service_id: number; station_code: string; extra_km: number }> {
+  return json(
+    await fetch(`/api/search/${searchId}/select`, {
+      method: 'POST',
+      headers: userHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ service_id: serviceId }),
+    }),
+  )
 }
 
 export type Strategy = 'exact' | 'time_window'
@@ -154,11 +195,13 @@ export type Match = {
 
 export type MatchResponse = {
   source: 'simulated'
-  match_id: number
+  match_id: number | null
   strategy: Strategy
   offered: number
   suggested_group_size: number
   matches: Match[]
+  paused: boolean
+  retry_after_s: number | null
 }
 
 export type MatchQuery = {
@@ -168,14 +211,14 @@ export type MatchQuery = {
   date: string
   window_start: string
   window_end: string
-  strategy: Strategy
+  strategy?: Strategy
 }
 
 export async function postMatch(q: MatchQuery, signal?: AbortSignal): Promise<MatchResponse> {
   return json(
     await fetch('/api/match', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: userHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(q),
       signal,
     }),
@@ -183,5 +226,5 @@ export async function postMatch(q: MatchQuery, signal?: AbortSignal): Promise<Ma
 }
 
 export async function acceptMatch(matchId: number): Promise<{ match_id: number; accepted: boolean }> {
-  return json(await fetch(`/api/match/${matchId}/accept`, { method: 'POST' }))
+  return json(await fetch(`/api/match/${matchId}/accept`, { method: 'POST', headers: userHeaders() }))
 }
