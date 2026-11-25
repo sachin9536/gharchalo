@@ -1,0 +1,39 @@
+web/src/TatkalCountdown.tsx
+  s_4a7049789034c6::t_a983eed5d7fec3 1-106
+FLAGSMITH_SETUP.md
+  s_4a7049789034c6::t_eb471630d741c6 113-127
+PROJECT_INVENTORY.md
+  s_4a7049789034c6::t_990dbffcd5bf47 32,44,56,65,67,173
+api/flags.py
+  s_4a7049789034c6::t_5fdde363394adf 19,44-46,49-50,233,262
+api/main.py
+  s_4a7049789034c6::t_14e49cb5be8cd9 111
+api/tests/test_product_features.py
+  s_4a7049789034c6::t_14a1bb981750ea 212-223
+deploy/flagsmith/bootstrap.py
+  s_4a7049789034c6::t_a1542800ec15c9 62,65-78,213,242-247,347-377,418
+web/src/App.css
+  s_4a7049789034c6::t_ac2bed7359a943 1646-1675
+web/src/App.tsx
+  s_4a7049789034c6::t_09db927ea766f7 485
+web/src/Results.tsx
+  s_4a7049789034c6::t_d8042db4b72c26 6,196,210,359-362
+web/src/api.ts
+  s_4a7049789034c6::t_eb79b9b6eb9906 108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "17dac1203d24616474aa4cc6ec44a1b5ce2e42bd",
+  "prompts": {},
+  "sessions": {
+    "s_4a7049789034c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a717cae5-ae45-4163-844e-fcfe44f023b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sachin Choudhary <sachinchoudharyxyz9@gmail.com>"
+    }
+  }
+}
