@@ -1,0 +1,71 @@
+README.md
+  s_4a7049789034c6::t_66356346bc5631 1-46
+api/config.py
+  s_4a7049789034c6::t_9ce567e0b468ad 1-39
+api/connections.py
+  s_4a7049789034c6::t_d2d0e8d6576c63 1-305
+api/fares.py
+  s_4a7049789034c6::t_fc3bdf243501ae 1-20
+api/geo.py
+  s_4a7049789034c6::t_d41ea8ae468e56 1-8
+api/main.py
+  s_4a7049789034c6::t_da70e19237bdb9 1-222
+api/requirements.txt
+  s_4a7049789034c6::t_639449b83be27d 1-9
+api/schemas.py
+  s_4a7049789034c6::t_e72763194395d7 1-7
+api/search.py
+  s_4a7049789034c6::t_5bbe02d2c8d0bf 1-207
+api/seed.py
+  s_4a7049789034c6::t_2df33b0f345caa 1-256
+api/seed_data.py
+  s_4a7049789034c6::t_8b0670d24a35d9 1-104
+api/tests/test_connections.py
+  s_4a7049789034c6::t_23f8140cd27315 1-272
+web/.gitignore
+  s_4a7049789034c6::t_930dafa43c6422 1-24
+web/.oxlintrc.json
+  s_4a7049789034c6::t_1952b3898a90c1 1-8
+web/README.md
+  s_4a7049789034c6::t_5d532c60e3cbde 1-32
+web/index.html
+  s_4a7049789034c6::t_d2758451635b82 1-13
+web/package-lock.json
+  s_4a7049789034c6::t_3a4fdbbbaf9242 1-1805
+web/package.json
+  s_4a7049789034c6::t_4811b904c89a48 1-25
+web/public/favicon.svg
+  s_4a7049789034c6::t_4cfaf3447d514c 1
+web/public/icons.svg
+  s_4a7049789034c6::t_603d9144ddcede 1-24
+web/src/api.ts
+  s_4a7049789034c6::t_c16b956343bab6 1-187
+web/src/assets/react.svg
+  s_4a7049789034c6::t_071753bec0959d 1
+web/src/assets/vite.svg
+  s_4a7049789034c6::t_99b07cab25f762 1
+web/src/main.tsx
+  s_4a7049789034c6::t_731cc9956fb8fe 1-10
+web/tsconfig.app.json
+  s_4a7049789034c6::t_27f2c1453fdef5 1-26
+web/tsconfig.json
+  s_4a7049789034c6::t_0bdcaefebe584c 1-7
+web/tsconfig.node.json
+  s_4a7049789034c6::t_5057016724fb63 1-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "a868d43c4a69da6ae4ad6a17931f188bd38a3764",
+  "prompts": {},
+  "sessions": {
+    "s_4a7049789034c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a717cae5-ae45-4163-844e-fcfe44f023b4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Sachin Choudhary <sachinchoudharyxyz9@gmail.com>"
+    }
+  }
+}
