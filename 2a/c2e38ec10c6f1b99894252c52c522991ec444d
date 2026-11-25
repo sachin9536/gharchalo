@@ -1,0 +1,125 @@
+api/tests/conftest.py
+  s_4a7049789034c6::t_7e91f66dd11e68 1-21
+api/tests/test_product_features.py
+  s_4a7049789034c6::t_fe7a58d5315efd 1-194
+  s_4a7049789034c6::t_128db9893ee6b4 195-211
+web/src/ReadAloud.tsx
+  s_4a7049789034c6::t_44142903478334 1-99
+api/experiment_events.py
+  s_4a7049789034c6::t_53ae9c5c8b180f 1-57
+api/tests/test_experiment_events.py
+  s_4a7049789034c6::t_e663f73056aebc 1-161
+  s_4a7049789034c6::t_98be497420d45a 162-219
+web/src/App.tsx
+  s_4a7049789034c6::t_3a67d0c18595df 91-92,95-96,101-139,144,147-148,154,161,165-166,271-333,336,352-358,361-366,371,416-422,436-446
+  s_4a7049789034c6::t_41157ea92be0d3 3,7,22,475-477,481-484,499
+web/src/DateStrip.tsx
+  s_4a7049789034c6::t_7472c155fef10d 1-57
+web/src/stats.ts
+  s_4a7049789034c6::t_bf2a94bc110bf6 1-49
+api/benchmark.py
+  s_4a7049789034c6::t_c7242272b992f0 1-141
+api/matching.py
+  s_4a7049789034c6::t_ca7763e9c08f84 3-12,18,26,31-39,50-53,58,63-76,83-85,92-96,107-108,115-116,121,125,136-140,142-147,150-208
+deploy/experiments/simulate.py
+  s_4a7049789034c6::t_26835073f98f4b 1-274
+api/tests/test_experiments_summary.py
+  s_4a7049789034c6::t_9969c02332cde2 1-101
+deploy/flagsmith/bootstrap.py
+  s_4a7049789034c6::t_3e5cf6e2841421 403
+  s_4a7049789034c6::t_bc86ed9e1a109f 1-57,59-402,404-427
+  s_4a7049789034c6::t_b8785011a4024c 58
+web/src/Results.tsx
+  s_4a7049789034c6::t_09006b3b7bbdbb 48-57,92-108,114,121-122,131-132,141-142,185-186,191-194,198-200,204-207,213-227,297-327,356-357,393,493-496,498-502
+  s_4a7049789034c6::t_8cf656bcf44ba6 2,5-7,45-47,503-519,521,525-531,535,571
+api/waitlist.py
+  s_4a7049789034c6::t_7c5b8d2b29ed30 1-40
+api/scripts/tatkal_storm.py
+  s_4a7049789034c6::t_1f3b1c43f14ba9 1-190
+PROJECT_INVENTORY.md
+  s_4a7049789034c6::t_2fe7e3978cc848 1-175
+CONTEXT.md
+  s_4a7049789034c6::t_234c0f36f9d9e2 4-5,7,13-23,27,29,31-32,34,36-37,39,43-44,46,48,51,53-54,56,58,65-66,68-74,77,80-85,93-106,108-120,125,127,129-135,137-141,145,149-154,156-167,171,173-174,176,180-185,189,191-192,194-199,203,205-211,213-214,216-218,220,222,224,226-236,238,240,242-246,250,252,256,258-261,265-285
+web/src/Experiments.tsx
+  s_4a7049789034c6::t_59506c2f35250c 1,4-186,190-355
+  s_4a7049789034c6::t_64fc30938b6832 2-3,187-189
+api/tests/test_matching_experiment.py
+  s_4a7049789034c6::t_2625fdeb927335 1-40,42-62,64,66-88,92-107,109-158
+  s_4a7049789034c6::t_cbb0cba7d2baef 41,63,65,89-91,108
+web/src/urlstate.ts
+  s_4a7049789034c6::t_bbacbc15c3f201 5-7,12-13,26,30-47
+.gitignore
+  s_4a7049789034c6::t_c874d2db9a3c55 14-22
+FLAGSMITH_SETUP.md
+  s_4a7049789034c6::t_dd2c20c54195fa 1-190
+api/.dockerignore
+  s_4a7049789034c6::t_77b84e4aa8dbd5 2,4-6
+api/.env.example
+  s_4a7049789034c6::t_a7d6278ef1124b 2,8-18
+api/cache.py
+  s_4a7049789034c6::t_60d6d127796b4e 1-48
+api/config.py
+  s_4a7049789034c6::t_f813a2d3c5e057 8-9,24-28,47-77
+api/db.py
+  s_4a7049789034c6::t_91ad7191dd1113 29-60
+api/flags.py
+  s_4a7049789034c6::t_8ca90efd15372f 1-328
+api/main.py
+  s_4a7049789034c6::t_4fe2b75fd505ce 2-3,6-7,9,11,16-18,20,24-27,31,33-72,88-111,142-221,227,264,289-316,322-324,326-327,330-332,334-391,400-436,450-451,467-487,497-498,506-509,512,529-530,532-683
+api/metrics.py
+  s_4a7049789034c6::t_1dfdd5da36ffdb 1-75
+api/models.py
+  s_4a7049789034c6::t_da50b7cc13fab5 75-117
+api/requirements.txt
+  s_4a7049789034c6::t_b3e1a56803fa05 10-11
+api/sarvam.py
+  s_4a7049789034c6::t_299d89ef3500ca 11,164-184
+api/search.py
+  s_4a7049789034c6::t_e970f873d23794 13,48,78-149,194,253-255,284
+api/seed.py
+  s_4a7049789034c6::t_a27d45063bbf0b 13-15,188
+api/tests/test_flags.py
+  s_4a7049789034c6::t_ff31794706a3b1 1-201
+api/tests/test_match.py
+  s_4a7049789034c6::t_8e5ae1259a08c4 1-2,10,41,43-49,52,56-67,72-76,88-91,113,117,120-127,179-221
+deploy/flagsmith/docker-compose.yml
+  s_4a7049789034c6::t_709903c02c1f3e 1-102
+deploy/incidents/incident.sh
+  s_4a7049789034c6::t_5d4851ad6b08d9 1-60
+deploy/nudgebee/trust-corporate-ca.values.yaml
+  s_4a7049789034c6::t_59f94727386c9a 1-28
+deploy/storm/run.sh
+  s_4a7049789034c6::t_1c75d597415a80 1-52
+web/package.json
+  s_4a7049789034c6::t_a599109a4011ea 10-11
+web/scripts/check-stats.mjs
+  s_4a7049789034c6::t_c9bdc725ebfa90 1-21
+web/src/App.css
+  s_4a7049789034c6::t_8c97f4cfe09e9b 1363-1645
+web/src/CabMatches.tsx
+  s_4a7049789034c6::t_9e031734cda684 3,27,33,36-37,42,51-59,68,71,73,76,88-93,102-120,125-129,132-136,158-172
+web/src/Connections.tsx
+  s_4a7049789034c6::t_c15a2729c4ffa4 132-143
+web/src/api.ts
+  s_4a7049789034c6::t_809b4dafc1275c 3-4,43,87-90,99-109,112-115,128-132,136,143,150,155,165-181,195-197,202,207-208,218,225,233-356
+web/src/speech.ts
+  s_4a7049789034c6::t_36b614703e2388 1-33
+web/src/user.ts
+  s_4a7049789034c6::t_62954a3dc062c4 3,8-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "2ac2e38ec10c6f1b99894252c52c522991ec444d",
+  "prompts": {},
+  "sessions": {
+    "s_4a7049789034c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a717cae5-ae45-4163-844e-fcfe44f023b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sachin Choudhary <sachinchoudharyxyz9@gmail.com>"
+    }
+  }
+}
