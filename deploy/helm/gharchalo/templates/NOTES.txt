@@ -1,0 +1,19 @@
+GharChalo is deployed (all data is simulated).
+
+Open the app:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gharchalo.fullname" . }}-web 8080:{{ .Values.web.service.port }}
+  then visit http://localhost:8080
+
+Check the pods:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if not (or .Values.api.sarvam.existingSecret .Values.api.sarvam.apiKey) }}
+
+Voice is OFF (no Sarvam key). Typed search works. To enable voice:
+  kubectl -n {{ .Release.Namespace }} create secret generic gharchalo-sarvam --from-literal=SARVAM_API_KEY=<key>
+  helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set api.sarvam.existingSecret=gharchalo-sarvam
+{{- end }}
+
+Incident knobs (see CONTEXT.md):
+  --set api.resources.limits.memory=128Mi              # OOMKilled
+  --set api.dbPool.size=2 --set api.dbPool.maxOverflow=0  # DB pool exhaustion (503s)

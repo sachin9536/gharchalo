@@ -3,7 +3,31 @@
 Voice → transcript → journey JSON (Sarvam), then search/match/Flagsmith/k6/NudgeBee per
 `../GharChalo_Hackathon_Roadmap.pdf`.
 
-## Run
+## Quick start (Docker, one command)
+
+```bash
+cp api/.env.example api/.env    # optional: add SARVAM_API_KEY for voice (typed search works without it)
+docker compose up --build       # Postgres + seed + API + web
+# open http://localhost:8080
+```
+
+`docker compose down` stops it; `docker compose down -v` also wipes the database. Restarts never reseed
+(`seed.py --if-empty`). Use another port with `WEB_PORT=9090 docker compose up`.
+
+## Kubernetes (kind / minikube / Docker Desktop)
+
+```bash
+deploy/k8s-up.sh                 # builds images, loads them into the local cluster, installs the Helm chart
+kubectl -n gharchalo port-forward svc/gharchalo-web 8080:80     # -> http://localhost:8080
+deploy/k8s-down.sh               # remove everything
+```
+
+The script picks up `SARVAM_API_KEY` from `api/.env` and stores it as a Kubernetes Secret. It refuses
+to run against a non-local cluster. No cluster yet? `brew install kind` (the script then creates one)
+or `minikube start`. Chart: `deploy/helm/gharchalo` (values documented in `values.yaml`; incident knobs:
+`api.resources.limits.memory`, `api.dbPool.size` / `maxOverflow`).
+
+## Run for development (hot reload)
 
 ```bash
 # API (Python 3.11+; this machine uses 3.14)

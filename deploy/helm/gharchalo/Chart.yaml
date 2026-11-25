@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gharchalo
+description: GharChalo (FestiveHacks 2026) - API, web UI, Postgres and a one-off seed job. All data is simulated.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

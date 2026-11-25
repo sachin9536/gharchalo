@@ -249,8 +249,55 @@ def seed(
     }
 
 
+def is_seeded(engine: Engine) -> bool:
+    """True if the stations table exists and has rows."""
+    from sqlalchemy import func, inspect, select
+
+    if not inspect(engine).has_table(models.Station.__tablename__):
+        return False
+    with Session(engine) as session:
+        return bool(session.scalar(select(func.count()).select_from(models.Station)))
+
+
+def wait_for_database(engine: Engine, timeout_seconds: float) -> None:
+    """Containers start in any order: retry until the database accepts connections."""
+    import time
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("select 1"))
+            return
+        except OperationalError:
+            if time.monotonic() > deadline:
+                raise
+            print("  database not ready yet, retrying...")
+            time.sleep(2)
+
+
 if __name__ == "__main__":
+    import argparse
+
     import db
 
-    print(f"Seeding {db.engine.url.render_as_string(hide_password=True)} (drops existing tables)...")
-    print(seed(db.engine))
+    parser = argparse.ArgumentParser(description="Seed GharChalo's simulated data.")
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="Do nothing if data already exists (safe for container restarts). Without it, tables are dropped.",
+    )
+    parser.add_argument("--wait", type=float, default=0, metavar="SECONDS", help="Wait up to this long for the database.")
+    args = parser.parse_args()
+
+    url = db.engine.url.render_as_string(hide_password=True)
+    if args.wait:
+        wait_for_database(db.engine, args.wait)
+    if args.if_empty and is_seeded(db.engine):
+        print(f"{url} already has data; not reseeding.")
+    else:
+        print(f"Seeding {url} (drops existing tables)...")
+        print(seed(db.engine))

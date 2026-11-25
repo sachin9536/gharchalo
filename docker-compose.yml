@@ -1,0 +1,67 @@
+# One command for the whole stack:   docker compose up --build
+# Then open http://localhost:8080
+#
+# Voice needs SARVAM_API_KEY in api/.env (optional; typed search works without it).
+# Fault knobs for the incident demo: DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 docker compose up -d api
+name: gharchalo
+
+x-api-image: &api-image
+  build: ./api
+  image: gharchalo-api:local
+
+x-db-url: &db-url postgresql+psycopg://gharchalo:gharchalo@db:5432/gharchalo
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: gharchalo
+      POSTGRES_PASSWORD: gharchalo
+      POSTGRES_DB: gharchalo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gharchalo -d gharchalo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    # Not published to the host, so it never clashes with a local Postgres on 5432.
+
+  seed:
+    <<: *api-image
+    command: ["python", "seed.py", "--if-empty", "--wait", "60"]
+    environment:
+      DATABASE_URL: *db-url
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *api-image
+    env_file:
+      - path: ./api/.env
+        required: false
+    environment:
+      DATABASE_URL: *db-url  # overrides any DATABASE_URL in api/.env
+      SARVAM_CA_BUNDLE: ""   # a host path from api/.env would not exist in the container
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    image: gharchalo-web:local
+    environment:
+      API_UPSTREAM: http://api:8000
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:

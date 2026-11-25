@@ -1,0 +1,61 @@
+# Local images by default (built with `docker compose build` or deploy/k8s-up.sh).
+api:
+  image:
+    repository: gharchalo-api
+    tag: local
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      # Incident knob: 128Mi reproduces the OOMKilled incident; 512Mi is the fix.
+      memory: 512Mi
+  # Incident knob: size 2 / maxOverflow 0 reproduces DB pool exhaustion (503s).
+  dbPool:
+    size: 10
+    maxOverflow: 10
+    timeoutSeconds: 10
+  sarvam:
+    # Prefer existingSecret (a Secret with key SARVAM_API_KEY); apiKey is for quick local use.
+    existingSecret: ""
+    apiKey: ""
+    chatModel: sarvam-105b
+    sttModel: "saaras:v3"
+  # Extra env vars, e.g. [{name: SARVAM_TIMEOUT_SECONDS, value: "60"}]
+  extraEnv: []
+
+web:
+  image:
+    repository: gharchalo-web
+    tag: local
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP   # NodePort works too (set nodePort)
+    port: 80
+    nodePort: null
+
+postgres:
+  enabled: true
+  image: postgres:16
+  user: gharchalo
+  password: gharchalo   # demo only
+  database: gharchalo
+  persistence:
+    enabled: false      # emptyDir: data is reseeded on a fresh pod
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Used only when postgres.enabled=false.
+externalDatabaseUrl: ""
+
+seed:
+  enabled: true
+  waitSeconds: 180
+  backoffLimit: 6

@@ -19,17 +19,28 @@ This file tells you what exists, how to run it, what you must not break, and exa
 | `/match` + accept (co-travellers) | ✅ Done | Every offer is logged to `match_events` |
 | Multi-leg journeys (train/bus/cab) | ✅ Done (stretch, built early) | Timing rules tested on all city pairs |
 | Frontend (React) | ✅ Done | Speak/Type, tabs, picks, sort, mobile |
-| Backend tests | ✅ 97 passing | `pytest` in `api/` |
+| Backend tests | ✅ 98 passing | `pytest` in `api/` |
 | **Flagsmith** | ⏳ **Not started in code** | Dashboard setup in progress (Sachin). See §8 |
 | **`/metrics` (Prometheus)** | ❌ Not built | Needed by infra. See §9 |
-| **Dockerfile / k8s manifests** | ❌ Not built | See §9 |
+| Docker Compose (whole stack) | ✅ Done, verified | `docker compose up --build` → http://localhost:8080 |
+| Helm chart + local-cluster script | ✅ Done (lint/render verified, not yet deployed to a cluster) | `deploy/k8s-up.sh`. See §9 |
 | k6 storm, Grafana, NudgeBee | ❌ Not started | See §9 |
 | Bulbul TTS | ❌ Not built (optional) | `tatkal_level` 2 assumes it exists. See §8.4 |
-| Git repo | ❌ **Not initialised yet** | Sachin will create and share it |
+| Git repo | ✅ https://github.com/sachin9536/gharchalo | |
 
 ---
 
-## 2. Run it locally (≈5 minutes)
+## 2. Run it locally
+
+**Fastest (Docker only, ≈2 minutes):**
+```bash
+cp api/.env.example api/.env    # optional: add SARVAM_API_KEY for voice
+docker compose up --build       # then open http://localhost:8080
+```
+**Kubernetes:** `deploy/k8s-up.sh` (kind / minikube / Docker Desktop), then the port-forward it prints.
+
+**For development with hot reload:**
+
 
 **Requirements:** Python 3.11+ (tested on 3.14), a recent Node (tested on 26), and optionally Docker for Postgres.
 
@@ -255,15 +266,19 @@ The roadmap wants these per cohort: alternatives shown, alternatives selected, s
   - `matches_offered_total{strategy}` and `matches_accepted_total{strategy}`
   - `search_source_total{source}` (live or cache, once caching exists)
   - a `tatkal_level` gauge
-- [ ] **`api/Dockerfile`** (python:3.11-slim or newer, `pip install -r requirements.txt`, `uvicorn main:app --host 0.0.0.0 --port 8000`). Seed on start, or with a one-off job.
-- [ ] **k8s manifests:** api Deployment + Service, Postgres, and a liveness/readiness probe on `/healthz`.
+- [x] **`api/Dockerfile`** and **`web/Dockerfile`** (nginx serves the build and proxies `/api/*` to the API; `API_UPSTREAM` sets the target).
+- [x] **`docker-compose.yml`**: Postgres, a one-off `seed` service (`seed.py --if-empty --wait 60`, so restarts never wipe data), API, web on `:8080`.
+- [x] **Helm chart `deploy/helm/gharchalo`**: api + web + Postgres Deployments/Services, `/healthz` probes, a post-install seed Job, secrets for the DB URL and the Sarvam key. `deploy/k8s-up.sh` / `k8s-down.sh` wrap it for local clusters.
+- [ ] **Not yet:** a real cluster run (lint and render only so far), Prometheus scrape annotations (add them once `/metrics` exists), kube-prometheus-stack, NudgeBee agent.
 
 ### 9.2 Fault knobs (the planted incidents)
 
 | Incident | Knob | Expected signal |
 |---|---|---|
-| Memory | Container `resources.limits.memory: 128Mi` (fix: `512Mi`) | `OOMKilled` restarts |
-| DB pool | `DB_POOL_SIZE=2`, `DB_MAX_OVERFLOW=0` (fix: `20` / `10`) | 503s with `Database unavailable (TimeoutError)`, p95 up |
+| Memory | Helm: `--set api.resources.limits.memory=128Mi` (fix: `512Mi`) | `OOMKilled` restarts |
+| DB pool | Helm: `--set api.dbPool.size=2 --set api.dbPool.maxOverflow=0` (fix: `20` / `10`). Compose: `DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 docker compose up -d api` | 503s with `Database unavailable (TimeoutError)`, p95 up |
+
+Pass Helm knobs straight through the script: `deploy/k8s-up.sh --set api.resources.limits.memory=128Mi`.
 
 There is no app code to write for these; the knobs are config only.
 
@@ -289,7 +304,8 @@ There is no app code to write for these; the knobs are config only.
 - **`sarvam-m` is deprecated:** use `sarvam-105b`. `scripts/smoke_sarvam.py` prints Sarvam's own error when a model name is wrong.
 - **Postgres first start:** the container needs a few seconds before it accepts connections. Seeding instantly fails with "server closed the connection".
 - **`.env` is read at startup only:** restart uvicorn after editing it. `--reload` covers code, not `.env`.
-- **`seed.py` drops all tables:** never point it at anything you care about.
+- **`seed.py` drops all tables** unless you pass `--if-empty` (the containers always do). Never point the plain command at anything you care about.
+- **Corporate proxy and Docker:** inside containers the API trusts Debian's CA store, not the macOS keychain. If Sarvam fails with a certificate error only in Docker/Kubernetes, mount the proxy's root CA and set `SARVAM_CA_BUNDLE` to its path in the container.
 - **React StrictMode in dev** runs effects twice, so dev logs duplicate `/match` offers. Don't read the dev experiment counts as real.
 
 ---

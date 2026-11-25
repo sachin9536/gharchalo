@@ -189,3 +189,12 @@ def test_other_routes_have_travellers_too(db):
         if _city(t.dest_code) == "Kota"
     ]
     assert kota  # the sponsor brief's Bengaluru -> Kota style requests find someone
+
+
+def test_is_seeded_reflects_state():
+    from seed import is_seeded
+
+    engine = _engine()
+    assert is_seeded(engine) is False  # no tables yet
+    seed(engine)
+    assert is_seeded(engine) is True
