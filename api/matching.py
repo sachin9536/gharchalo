@@ -36,11 +36,13 @@ class MatchOut(BaseModel):
 
 class MatchResponse(BaseModel):
     source: Literal["simulated"] = "simulated"
-    match_id: int  # the logged offer; POST /match/{match_id}/accept records acceptance
+    match_id: int | None  # the logged offer; None when matching is paused (tatkal_level 3)
     strategy: Strategy
     offered: int
     suggested_group_size: int  # you + matches, capped at a 4-seat cab
     matches: list[MatchOut]
+    paused: bool = False  # tatkal_level 3: matching paused under load (HTTP 200, nothing written)
+    retry_after_s: int | None = None
 
 
 def _minutes(t: dt.time) -> int:

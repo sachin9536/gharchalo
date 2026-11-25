@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  fetchConfig,
   parseText,
   postVoice,
   searchJourneys,
+  type ClientConfig,
   type Journey,
   type SearchQuery,
   type SearchResponse,
@@ -80,15 +82,50 @@ export default function App() {
   const [form, setForm] = useState<SearchQuery>({ origin: 'SBC', dest: 'HYB', date: DEMO_DATE })
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [query, setQuery] = useState<SearchQuery | null>(null)
-  // Temporary: Flagsmith's 5 / 15 / 30 km cohort will set this per user.
-  const [maxKm, setMaxKm] = useState(15)
+  // null = Flagsmith's 5 / 15 / 30 km cohort decides on the server per user.
+  const [maxKmOverride, setMaxKmOverride] = useState<number | null>(null)
   const [withConnections, setWithConnections] = useState(false)
   const [outcome, setOutcome] = useState<SearchOutcome | null>(null)
+  const [cfg, setCfg] = useState<ClientConfig | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  const textOnly = cfg?.interaction_mode === 'text_only'
+  const effectiveMode: Mode = textOnly ? 'type' : mode
+
+  // Poll /api/config so dashboard flag changes (tatkal_level, interaction_mode) land live.
+  useEffect(() => {
+    let active = true
+    const controller = new AbortController()
+    const load = () => {
+      fetchConfig(query?.date ?? form.date, controller.signal)
+        .then((c) => {
+          if (active) setCfg(c)
+        })
+        .catch(() => {
+          // Safe defaults remain in place if /config is unreachable.
+        })
+    }
+    load()
+    const timer = window.setInterval(load, 15_000)
+    return () => {
+      active = false
+      controller.abort()
+      window.clearInterval(timer)
+    }
+  }, [query?.date, form.date])
+
+  // Experiment A (level 0 vs level 1): refresh active search results on the poll_s cadence from Flagsmith.
+  const pollS = cfg?.poll_s ?? 30
+  useEffect(() => {
+    if (!query) return
+    const timer = window.setInterval(() => setRefreshTick((t) => t + 1), pollS * 1000)
+    return () => window.clearInterval(timer)
+  }, [query, pollS])
 
   // Results are stored with the key they answer, so "idle" and "loading" are
   // derived (no outcome for the current key yet) rather than set inside the effect.
   const route = query ? `${query.origin}|${query.dest}|${query.date}` : null
-  const searchKey = route ? `${route}|${maxKm}|${withConnections}` : null
+  const searchKey = route ? `${route}|${maxKmOverride ?? 'auto'}|${withConnections}|${refreshTick}` : null
   const settled = searchKey !== null && outcome?.key === searchKey ? outcome : null
   const searching = searchKey !== null && settled === null
   // While a refinement of the same route loads (distance, journeys with changes),
@@ -98,14 +135,14 @@ export default function App() {
   useEffect(() => {
     if (!query || !searchKey || !route) return
     const controller = new AbortController()
-    searchJourneys(query, maxKm, withConnections, controller.signal)
+    searchJourneys(query, maxKmOverride, withConnections, controller.signal)
       .then((data) => setOutcome({ key: searchKey, route, data }))
       .catch((e) => {
         if (e instanceof DOMException && e.name === 'AbortError') return
         setOutcome({ key: searchKey, route, error: e instanceof Error ? e.message : String(e) })
       })
     return () => controller.abort()
-  }, [query, maxKm, withConnections, searchKey, route])
+  }, [query, maxKmOverride, withConnections, searchKey, route])
 
   const show = (r: VoiceResponse) => {
     setResult(r)
@@ -204,17 +241,51 @@ export default function App() {
       </header>
 
       <main>
+        {(() => {
+          const level = shown?.tatkal_level ?? cfg?.tatkal_level ?? 0
+          if (level >= 1) {
+            const msg =
+              level >= 3
+                ? 'Peak Tatkal load (Level 3): serving cached search results · co-traveller matching paused.'
+                : level === 2
+                  ? 'High demand (Level 2): multi-leg planning paused to keep direct search fast.'
+                  : `High demand (Level 1): results refresh every ${pollS}s.`
+            return <div className="banner warn">{msg}</div>
+          }
+          if (cfg?.urgent && query) {
+            return <div className="banner nudge">Priority service active (travel within 48h · Level 0)</div>
+          }
+          return null
+        })()}
+
+        {textOnly && (
+          <div className="banner warn">
+            Voice search is temporarily paused (text-only fallback). Typed search works normally.
+          </div>
+        )}
+
         <section className="card search-card">
           <div className="segmented" role="tablist" aria-label="How do you want to search?">
-            <button role="tab" aria-selected={mode === 'speak'} className={mode === 'speak' ? 'on' : ''} onClick={() => setMode('speak')}>
+            <button
+              role="tab"
+              aria-selected={effectiveMode === 'speak'}
+              className={effectiveMode === 'speak' ? 'on' : ''}
+              onClick={() => setMode('speak')}
+              disabled={textOnly}
+            >
               🎙 Speak
             </button>
-            <button role="tab" aria-selected={mode === 'type'} className={mode === 'type' ? 'on' : ''} onClick={() => setMode('type')}>
+            <button
+              role="tab"
+              aria-selected={effectiveMode === 'type'}
+              className={effectiveMode === 'type' ? 'on' : ''}
+              onClick={() => setMode('type')}
+            >
               ⌨️ Type
             </button>
           </div>
 
-          {mode === 'speak' ? (
+          {effectiveMode === 'speak' ? (
             <div className="speak">
               <button
                 className={`mic-orb ${recording ? 'recording' : ''}`}
@@ -263,13 +334,17 @@ export default function App() {
                 {result.language_code && <span className="tag soft">{result.language_code}</span>}
               </span>
             </div>
-            <textarea value={edited} onChange={(e) => setEdited(e.target.value)} rows={2} aria-label="Transcript" />
-            <div className="actions">
-              <button onClick={() => void understand(edited)} disabled={busy || !edited.trim() || edited === result.transcript}>
-                Fix the text and retry
-              </button>
-              <span className="muted small">Misheard something? Edit it, then retry.</span>
-            </div>
+            {!textOnly && (
+              <>
+                <textarea value={edited} onChange={(e) => setEdited(e.target.value)} rows={2} aria-label="Transcript" />
+                <div className="actions">
+                  <button onClick={() => void understand(edited)} disabled={busy || !edited.trim() || edited === result.transcript}>
+                    Fix the text and retry
+                  </button>
+                  <span className="muted small">Misheard something? Edit it, then retry.</span>
+                </div>
+              </>
+            )}
             <div className="journey-grid">
               <StationLine label="From" station={j.origin} />
               <StationLine label="To" station={j.destination} />
@@ -298,8 +373,9 @@ export default function App() {
             key={route}
             data={shown}
             updating={searching}
-            maxKm={maxKm}
-            onMaxKm={setMaxKm}
+            maxKmOverride={maxKmOverride}
+            allowOverride={cfg?.allow_override ?? true}
+            onMaxKm={setMaxKmOverride}
             onShowConnections={() => setWithConnections(true)}
             onModify={modify}
           />

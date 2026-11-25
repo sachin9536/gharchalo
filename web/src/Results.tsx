@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Option, SearchResponse } from './api'
+import { selectAlternative, type Option, type SearchResponse } from './api'
 import CabMatches from './CabMatches'
 import Connections from './Connections'
 import { chain, clock, dayOffset, dayStamp, inr, shortDate, span, via } from './format'
@@ -26,7 +26,17 @@ const COMPARE: Record<Sort, (a: Option, b: Option) => number> = {
 
 const available = (o: Option) => o.status === 'available'
 
-function OptionRow({ o, showOrigin }: { o: Option; showOrigin?: boolean }) {
+function OptionRow({
+  o,
+  showOrigin,
+  onSelect,
+  selected,
+}: {
+  o: Option
+  showOrigin?: boolean
+  onSelect?: () => void
+  selected?: boolean
+}) {
   const plus = dayOffset(o.depart_at, o.arrive_at)
   return (
     <li className={`option ${o.status}`}>
@@ -50,6 +60,13 @@ function OptionRow({ o, showOrigin }: { o: Option; showOrigin?: boolean }) {
           <span className="chip ok">{o.seats_available} seats</span>
         ) : (
           <span className="chip wl">WL {o.waitlist}</span>
+        )}
+        {onSelect && (
+          <div>
+            <button className={`km select-alt ${selected ? 'on' : ''}`} onClick={onSelect} disabled={selected}>
+              {selected ? 'Selected ✓' : 'Choose this'}
+            </button>
+          </div>
         )}
       </div>
     </li>
@@ -121,20 +138,36 @@ export function ResultsSkeleton() {
 export default function Results({
   data,
   updating,
-  maxKm,
+  maxKmOverride,
+  allowOverride,
   onMaxKm,
   onShowConnections,
   onModify,
 }: {
   data: SearchResponse
   updating: boolean
-  maxKm: number
-  onMaxKm: (km: number) => void
+  maxKmOverride: number | null
+  allowOverride: boolean
+  onMaxKm: (km: number | null) => void
   onShowConnections: () => void
   onModify: () => void
 }) {
   const [tab, setTab] = useState<Tab>('all')
   const [sort, setSort] = useState<Sort>('depart')
+  const [selectedAlt, setSelectedAlt] = useState<number | null>(null)
+  const [selectError, setSelectError] = useState<string | null>(null)
+
+  const activeKm = data.max_station_distance_km
+  const chooseAlt = async (serviceId: number) => {
+    if (data.search_id === null) return
+    setSelectError(null)
+    try {
+      await selectAlternative(data.search_id, serviceId)
+      setSelectedAlt(serviceId)
+    } catch (e) {
+      setSelectError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const trains = data.options.filter((o) => o.mode === 'train').sort(COMPARE[sort])
   const buses = data.options.filter((o) => o.mode === 'bus').sort(COMPARE[sort])
@@ -174,6 +207,7 @@ export default function Results({
         </div>
         <div className="routebar-side">
           {updating && <span className="spinner" role="status" aria-label="Updating" />}
+          {data.served_from === 'cache' && <span className="tag soft">cached</span>}
           <span className="tag">simulated</span>
           <button className="link" onClick={onModify}>
             Change search
@@ -283,29 +317,49 @@ export default function Results({
 
       {visible('nearby') && showNearby && (
         <section className="card">
-          <h2>Trains with seats from nearby stations</h2>
+          <div className="card-head">
+            <h2>Trains with seats from nearby stations</h2>
+            <span className="tag soft">{activeKm} km cohort</span>
+          </div>
           <p className="warn">
-            No train with seats leaves {data.origin.name}. Show stations within
-            {DISTANCE_CHOICES.map((km) => (
-              <button
-                key={km}
-                className={`km ${km === maxKm ? 'on' : ''}`}
-                onClick={() => onMaxKm(km)}
-                aria-pressed={km === maxKm}
-              >
-                {km} km
-              </button>
-            ))}
-            <span className="muted small"> (Flagsmith will assign this per user)</span>
+            No train with seats leaves {data.origin.name}. Showing nearby stations within <strong>{activeKm} km</strong>
+            {allowOverride && (
+              <>
+                {' '}
+                · demo override:
+                {DISTANCE_CHOICES.map((km) => (
+                  <button
+                    key={km}
+                    className={`km ${km === activeKm ? 'on' : ''}`}
+                    onClick={() => onMaxKm(km)}
+                    aria-pressed={km === activeKm}
+                  >
+                    {km} km
+                  </button>
+                ))}
+                {maxKmOverride !== null && (
+                  <button className="link small" onClick={() => onMaxKm(null)}>
+                    reset
+                  </button>
+                )}
+              </>
+            )}
           </p>
+          {selectError && <p className="error">{selectError}</p>}
           {data.alternatives.length ? (
             <ul className="options">
               {data.alternatives.map((o) => (
-                <OptionRow key={o.id} o={o} showOrigin />
+                <OptionRow
+                  key={o.id}
+                  o={o}
+                  showOrigin
+                  onSelect={data.search_id !== null ? () => void chooseAlt(o.id) : undefined}
+                  selected={selectedAlt === o.id}
+                />
               ))}
             </ul>
           ) : (
-            <p className="muted">Nothing with seats within {maxKm} km.</p>
+            <p className="muted">Nothing with seats within {activeKm} km.</p>
           )}
           {data.more_alternatives_beyond_limit > 0 && (
             <p className="muted small">
@@ -341,6 +395,7 @@ export default function Results({
             dest={data.destination.code}
             date={data.date}
             shares={data.cab.shares}
+            allowOverride={allowOverride}
           />
         </section>
       )}
