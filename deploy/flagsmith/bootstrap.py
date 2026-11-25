@@ -59,7 +59,22 @@ FEATURES = [
     ("interaction_mode", "STANDARD", True, "voice", []),
     ("route_fault_sbc_hyb", "STANDARD", False, None, []),  # incident toggle: OFF
     ("sarvam_fault_mode", "STANDARD", True, "none", []),  # none | 429 | timeout | error
+    ("tatkal_countdown", "STANDARD", False, None, []),  # release toggle, rolled out by the segment below
 ]
+
+# Gradual release of the Tatkal countdown: sticky 25% of visitors whose journey is 1-7 days away
+# (Tatkal opens the day before travel, so it matters then). Turning the flag ON for the whole
+# environment releases it to everyone; OFF everywhere is the kill switch.
+RELEASE_SEGMENT = {
+    "name": "tatkal_countdown_beta",
+    "description": "Gradual release: a sticky 25% of visitors travelling in 1 to 7 days (when Tatkal matters).",
+    "rules": [{"type": "ALL", "rules": [{"type": "ALL", "conditions": [
+        {"operator": "PERCENTAGE_SPLIT", "property": None, "value": "25"},
+        {"operator": "GREATER_THAN_INCLUSIVE", "property": "days_until_travel", "value": "1"},
+        {"operator": "LESS_THAN_INCLUSIVE", "property": "days_until_travel", "value": "7"},
+    ]}]}],
+}
+RELEASE_DEMO_IDENTITY = "demo-beta"  # always sees released features, for demos (?as=demo-beta)
 
 
 class ApiError(RuntimeError):
@@ -195,6 +210,7 @@ TAGS = {  # label -> colour
     "Matching A/B": "#DB2777",
     "Incident switch": "#DC2626",
     "Config": "#64748B",
+    "Release": "#059669",
 }
 
 FEATURE_DOCS = {  # feature -> (tag, description shown in the dashboard)
@@ -223,6 +239,12 @@ FEATURE_DOCS = {  # feature -> (tag, description shown in the dashboard)
     ),
     "interaction_mode": ("Config", "voice or text_only. text_only is the fallback when Sarvam is down: the Speak tab is disabled and typed search keeps working."),
     "route_fault_sbc_hyb": ("Incident switch", "Incident switch, for testing: when ON, searches between Bengaluru and Hyderabad return a server error while other routes stay healthy. Turn OFF to recover."),
+    "tatkal_countdown": (
+        "Release",
+        "Release toggle for the Tatkal countdown (\"opens in 14h 22m\" + calendar reminder). Off for the environment; the "
+        "tatkal_countdown_beta segment turns it on for a sticky 25% of visitors travelling in 1-7 days. Toggle the "
+        "environment value ON to release to everyone, or remove the segment override to stop the rollout. demo-beta always sees it.",
+    ),
     "sarvam_fault_mode": ("Incident switch", "Incident switch, for testing: none | 429 | timeout | error simulates Sarvam failing without using real quota. Pair with interaction_mode = text_only."),
 }
 
@@ -322,6 +344,37 @@ def ensure_feature_docs(pid: int, features: dict, token: str) -> None:
             step(f"Documented feature {feature_name}")
 
 
+def ensure_release(env_key: str, pid: int, features: dict, token: str) -> None:
+    """The rollout segment, its override on tatkal_countdown, and the always-on demo identity."""
+    feature = features["tatkal_countdown"]
+    segments = results(call("GET", f"/projects/{pid}/segments/", token=token))
+    segment = next((sg for sg in segments if sg["name"] == RELEASE_SEGMENT["name"]), None)
+    if segment is None:
+        segment = call("POST", f"/projects/{pid}/segments/", RELEASE_SEGMENT, token)
+        step(f"Created segment {RELEASE_SEGMENT['name']}")
+    elif segment.get("description") != RELEASE_SEGMENT["description"]:
+        call("PATCH", f"/projects/{pid}/segments/{segment['id']}/", {"description": RELEASE_SEGMENT["description"]}, token)
+        step(f"Described segment {RELEASE_SEGMENT['name']}")
+    try:
+        call("POST", f"/environments/{env_key}/features/{feature['id']}/create-segment-override/", {
+            "enabled": True,
+            "feature_state_value": {"type": "bool", "boolean_value": True},
+            "feature_segment": {"segment": segment["id"]},
+        }, token)
+        step("Created override: tatkal_countdown_beta -> tatkal_countdown ON")
+    except ApiError as exc:
+        if not any(word in str(exc).lower() for word in ("already", "exist", "unique")):
+            raise
+    found = results(call("GET", f"/environments/{env_key}/identities/?q={RELEASE_DEMO_IDENTITY}", token=token))
+    identity = next((i for i in found if i.get("identifier") == RELEASE_DEMO_IDENTITY), None)
+    if identity is None:
+        identity = call("POST", f"/environments/{env_key}/identities/", {"identifier": RELEASE_DEMO_IDENTITY}, token)
+    base = f"/environments/{env_key}/identities/{identity['id']}/featurestates/"
+    if not any(st.get("feature") == feature["id"] for st in results(call("GET", base, token=token))):
+        call("POST", base, {"feature": feature["id"], "enabled": True}, token)
+        step(f"Identity {RELEASE_DEMO_IDENTITY} always sees tatkal_countdown")
+
+
 def main() -> int:
     token = login()
 
@@ -362,6 +415,7 @@ def main() -> int:
     pin_demo_identities(env_key, existing, token)
     ensure_matching_config(env_key, env["id"], existing["matching_config"], token)
 
+    ensure_release(env_key, pid, existing, token)
     ensure_events_warehouse(env_key, token)
     ensure_variant_keys(pid, existing, token)
     metric_ids = ensure_metrics(env_key, token)

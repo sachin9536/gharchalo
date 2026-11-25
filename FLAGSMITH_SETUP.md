@@ -110,6 +110,21 @@ the script reads it and never overwrites it. The demo identity `demo-15km` is pi
 
 ---
 
+## 0e. Releasing a feature gradually (`tatkal_countdown`)
+
+A release toggle shows the three classic controls on one real feature, the Tatkal countdown:
+
+| Control | Where in the dashboard | Effect |
+|---|---|---|
+| **Percentage** | segment `tatkal_countdown_beta`, condition `PERCENTAGE_SPLIT 25` | a sticky 25% of visitors (the same person always gets the same answer) |
+| **Situation** | same segment, `days_until_travel` between 1 and 7 | only travellers for whom Tatkal is about to matter |
+| **Toggle** | feature `tatkal_countdown`, environment value | ON releases to everyone; OFF (and removing the segment override) is the kill switch |
+
+Demo: open `?as=demo-beta` (always on) next to an ordinary tab, then flip the environment toggle and watch everyone get it within ~10 s.
+The app reads it from `GET /config` → `features.tatkal_countdown`; the API never needs a deploy to change who sees it.
+
+---
+
 ## 1. Install dependencies (when online)
 
 ```bash

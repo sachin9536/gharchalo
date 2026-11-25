@@ -16,7 +16,7 @@ import datetime as dt
 import json
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import config
@@ -41,7 +41,12 @@ DEFAULTS: dict[str, tuple[bool, Any]] = {
     # P1 test-only fault switches (controlled, reversible incidents).
     "route_fault_sbc_hyb": (False, None),
     "sarvam_fault_mode": (True, "none"),
+    # Release toggles: on/off per visitor. Off by default; Flagsmith rolls them out (percentage,
+    # situation segments, or everyone) without a deploy, and switching them off is the kill switch.
+    "tatkal_countdown": (False, None),
 }
+
+RELEASE_FLAGS = ("tatkal_countdown",)
 
 COHORTS = (5, 15, 30)
 STRATEGIES = ("exact", "time_window")
@@ -225,6 +230,7 @@ class UserFlags:
     urgent: bool
     days_until_travel: int | None
     source: str  # "identity" | "environment" | "defaults"
+    features: dict = field(default_factory=dict)  # release toggle name -> on for this visitor
 
     @property
     def poll_s(self) -> int:
@@ -253,6 +259,7 @@ def _resolve(get: Getter, urgent: bool, days: int | None, source: str) -> UserFl
         urgent=urgent,
         days_until_travel=days,
         source=source,
+        features={name: bool(get(name)[0]) for name in RELEASE_FLAGS},
     )
 
 

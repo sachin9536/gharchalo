@@ -105,6 +105,7 @@ export type ClientConfig = {
   urgent: boolean
   flags_source: 'identity' | 'environment' | 'defaults'
   allow_override: boolean
+  features?: Record<string, boolean> // release toggles for this visitor (Flagsmith)
 }
 
 export type SearchQuery = { origin: string; dest: string; date: string }

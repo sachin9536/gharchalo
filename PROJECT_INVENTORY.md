@@ -29,7 +29,7 @@ All railway data, fares, travellers and load are **simulated**. Never present th
 | Share by WhatsApp / copy link | ✅ | `web/src/urlstate.ts` | Search lives in the URL; keeps `?as=` demo identity |
 | Experiments page | ✅ | `web/src/Experiments.tsx`, `stats.ts` | Real vs simulated visitors kept apart; 95% ranges + significance verdict |
 | Fare split / expense settle-up | ⏳ | | Original problem-statement feature, not built yet |
-| Tatkal countdown + calendar reminder | ⏳ | | Suggested, not built |
+| Tatkal countdown + calendar reminder | ✅ | `web/src/TatkalCountdown.tsx` | **Released behind the `tatkal_countdown` flag** (25% of travellers within a week) |
 | Watchlist / seat alerts | ⏳ | | Out of the roadmap's scope |
 
 ---
@@ -41,7 +41,7 @@ All railway data, fares, travellers and load are **simulated**. Never present th
 **App side:** `api/flags.py` (local evaluation, safe defaults, fail-fast when Flagsmith is down), `api/experiment_events.py`
 (exposures + conversions). Core integration merged from **Bhavesh's** `feature/flagsmith` branch.
 
-### 2.1 Features (8)
+### 2.1 Features (9)
 
 | Flag | Type | Default | What it controls | Tag in the dashboard |
 |---|---|---|---|---|
@@ -53,6 +53,7 @@ All railway data, fares, travellers and load are **simulated**. Never present th
 | `interaction_mode` | string | `voice` | `text_only` = Sarvam fallback (voice and spoken replies off) | Config |
 | `route_fault_sbc_hyb` | boolean | off | Incident: 500s on Bengaluru ↔ Hyderabad only | Incident switch |
 | `sarvam_fault_mode` | string | `none` | Incident: simulated Sarvam `429` / `timeout` / `error` | Incident switch |
+| `tatkal_countdown` | boolean (release toggle) | off | **Gradual release** of the Tatkal countdown: segment `tatkal_countdown_beta` = sticky 25% of visitors travelling in 1–7 days; environment ON = everyone; OFF = kill switch | Release |
 
 Every feature has a description in the dashboard explaining it.
 
@@ -61,8 +62,9 @@ Every feature has a description in the dashboard explaining it.
 | Item | Details |
 |---|---|
 | Segment `urgent_travellers` | trait `travels_within_48h = true` → override `tatkal_level = 0` (fair degradation) |
+| Segment `tatkal_countdown_beta` | `PERCENTAGE_SPLIT 25` AND `days_until_travel` 1–7 → `tatkal_countdown` ON (verified: 26.5% of visitors, 0% outside the window, sticky) |
 | Traits sent per request | `travels_within_48h`, `days_until_travel`, `lang` |
-| Demo identities (pinned by identity override, outside experiments) | `demo-5km`, `demo-15km`, `demo-30km` (1 / 2 / 3 nearby stations), `demo-exact`, `demo-flex` (1 vs 6 co-travellers). Open the app with `?as=<identity>` |
+| Demo identities (pinned by identity override, outside experiments) | `demo-5km`, `demo-15km`, `demo-30km` (1 / 2 / 3 nearby stations), `demo-exact`, `demo-flex` (1 vs 6 co-travellers), `demo-beta` (always sees released features). Open the app with `?as=<identity>` |
 | Native experiment 1 | **Station reach** on `max_station_distance_km`, metric `alternative_selected`, running |
 | Native experiment 2 | **Matching: exact vs flexible** on `matching_strategy`, metric `match_accepted`, running |
 | Experiment metrics | `alternative_selected`, `match_accepted` (occurrence, up) |
@@ -168,7 +170,7 @@ settings `FLAGSMITH_SERVER_KEY`, `FLAGSMITH_API_URL`, `FLAGSMITH_REFRESH_SECONDS
 ## 9. Known gaps and open items
 
 - [ ] Capture a NudgeBee RCA of the memory incident (run `incident.sh oom`, `storm/run.sh`, ask NuBi, then `incident.sh fix`)
-- [ ] Fare split, Tatkal countdown (product)
+- [ ] Fare split (product)
 - [ ] Prometheus + Grafana dashboard in the cluster
 - [ ] Your local SQLite holds an older seed (1,204 services); `python seed.py` aligns it but wipes experiment events
 - [ ] Rotate the NudgeBee install keys after the hackathon (they were shared in chat)

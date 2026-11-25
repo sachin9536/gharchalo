@@ -108,6 +108,7 @@ def client_config(date: dt.date | None = None, user_id: str | None = Depends(use
         "urgent": f.urgent,
         "flags_source": f.source,
         "allow_override": config.ALLOW_FLAG_OVERRIDE,
+        "features": f.features,  # release toggles for this visitor, e.g. {"tatkal_countdown": true}
     }
 
 

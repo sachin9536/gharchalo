@@ -482,6 +482,7 @@ export default function App() {
               spokenLang={result?.journey.language === 'hi' ? 'hi' : 'en'}
               autoSpeak={result?.source === 'sarvam'}
               voiceOff={textOnly}
+              features={cfg?.features ?? {}}
             />
           )}
 

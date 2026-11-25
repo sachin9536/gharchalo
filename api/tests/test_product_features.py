@@ -209,3 +209,15 @@ def test_urgent_travellers_keep_spoken_replies_at_level_2(client, monkeypatch):
     assert client.post("/speak", json={"text": "hi", "language": "en", "date": "2026-11-27"}).status_code == 200
     assert client.post("/speak", json={"text": "hi", "language": "en", "date": "2026-11-30"}).status_code == 409
     assert seen == [dt.date(2026, 11, 27), dt.date(2026, 11, 30)]
+
+
+# --- release toggles (Flagsmith: tatkal_countdown) --------------------------------------------
+
+def test_release_toggles_are_off_by_default(client):
+    assert client.get("/config", params={"date": DEMO}, headers={"X-User-Id": "u1"}).json()["features"] == {"tatkal_countdown": False}
+
+
+def test_a_release_toggle_follows_the_flags_on_off_state():
+    on = flags._resolve(lambda name: (name == "tatkal_countdown", None), False, 2, "identity")
+    off = flags._resolve(lambda name: (False, None), False, 2, "identity")
+    assert on.features == {"tatkal_countdown": True} and off.features == {"tatkal_countdown": False}

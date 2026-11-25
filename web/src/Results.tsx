@@ -3,6 +3,7 @@ import { selectAlternative, type Option, type SearchResponse } from './api'
 import CabMatches from './CabMatches'
 import Connections from './Connections'
 import DateStrip from './DateStrip'
+import TatkalCountdown from './TatkalCountdown'
 import ReadAloud from './ReadAloud'
 import { spokenSummary, type SpokenLang } from './speech'
 import {
@@ -192,6 +193,7 @@ export default function Results({
   spokenLang,
   autoSpeak,
   voiceOff,
+  features,
 }: {
   data: SearchResponse
   updating: boolean
@@ -205,6 +207,7 @@ export default function Results({
   spokenLang: SpokenLang
   autoSpeak: boolean
   voiceOff: boolean
+  features: Record<string, boolean>
 }) {
   const [tab, setTab] = useState<Tab>('all')
   const [sort, setSort] = useState<Sort>('depart')
@@ -352,6 +355,10 @@ export default function Results({
           </>
         )}
       </p>
+
+      {features.tatkal_countdown && (
+        <TatkalCountdown date={data.date} origin={data.origin.city} destination={data.destination.city} />
+      )}
 
       <DateStrip query={{ origin: data.origin.code, dest: data.destination.code, date: data.date }} onPick={onPickDate} />
 
