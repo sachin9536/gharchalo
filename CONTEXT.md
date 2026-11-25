@@ -219,6 +219,37 @@ p50 3–6 ms); the incident run and the RCA are still to be captured.
 
 The NudgeBee agent setup on a corporate network is in §14. NudgeBee sees the whole cluster.
 
+### 9.1 Bad release and rollback (roadmap incident 2)
+
+A release is a **Deployment revision**, not a runtime toggle. Release `1.5.0 "Express surge pricing"` ships a real bug
+(`api/surge_pricing.py`: the new festival corridor's capacity is 0, so the multiplier divides by zero): `GET /search`
+Bengaluru ↔ Hyderabad returns 500 in both directions, every other route stays 200, and the API log carries the genuine traceback
+tagged `release 1.5.0`, with no hint about the fix. `kubectl rollout history deployment/gharchalo-api` names every release
+(`1.4.0: Baseline`, `1.5.0: Express surge pricing`); responses carry `X-Release`, and `/healthz` reports `release`.
+
+```bash
+deploy/release.sh v2          # ship the buggy 1.5.0 (the k6 loadgen in the chart produces the 500s continuously)
+deploy/release.sh status      # live vs Helm, rollout history, corridor and control-route check
+# NudgeBee investigates (pod logs + rollout history) and rolls back = `kubectl rollout undo deployment/gharchalo-api`
+deploy/release.sh reconcile   # REQUIRED after a kubectl/NudgeBee rollback: make Helm agree with what is live
+deploy/release.sh rollback    # the human path: back to the previous *release* through Helm
+```
+
+Two traps, both verified and handled:
+- **Helm drift.** `kubectl rollout undo` changes the Deployment, not Helm's record. Without `reconcile`, the next
+  `helm upgrade --reuse-values` (incident.sh, a re-deploy) silently ships 1.5.0 again.
+- **Helm 4 server-side apply.** After a kubectl rollback, kubectl owns those fields and every Helm upgrade fails with a conflict.
+  `k8s-up.sh`, `release.sh` and `incident.sh` pass `--force-conflicts` on Helm 4 (not on Helm 3, which has no such conflict).
+- `release.sh rollback` targets the last revision with a **different version**: `helm rollback` alone goes to the previous
+  revision, which can be the same buggy release.
+
+The Flagsmith flag `route_fault_sbc_hyb` is the *other* recovery path (feature disable, no deploy); the release switch is the
+rollback path. The k6 loadgen's visitors are `sim-loadgen-vu-*` and send no Flagsmith exposures.
+
+**Automatic alerting** (`deploy/nudgebee-alerts.yaml`: 5xx-rate PrometheusRule → Alertmanager → NudgeBee runner) needs
+kube-prometheus-stack, which runs on Bhavesh's cluster but not on Sachin's (the NudgeBee install there disabled Prometheus).
+Without it, ask NuBi directly; it reads pod logs and deployment history either way.
+
 ---
 
 ## 10. Gotchas we already hit

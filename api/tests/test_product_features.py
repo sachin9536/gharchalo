@@ -221,3 +221,47 @@ def test_a_release_toggle_follows_the_flags_on_off_state():
     on = flags._resolve(lambda name: (name == "tatkal_countdown", None), False, 2, "identity")
     off = flags._resolve(lambda name: (False, None), False, 2, "identity")
     assert on.features == {"tatkal_countdown": True} and off.features == {"tatkal_countdown": False}
+
+
+# --- the buggy release (express surge pricing) and release identity ---------------------------
+
+def test_baseline_release_serves_the_festival_corridor(client):
+    for origin, dest in (("SBC", "HYB"), ("HYB", "SBC")):
+        assert client.get("/search", params={"origin": origin, "dest": dest, "date": DEMO}).status_code == 200
+
+
+def test_buggy_release_fails_only_on_the_festival_corridor(client, monkeypatch, caplog):
+    monkeypatch.setattr(config, "ENABLE_EXPRESS_SURGE_PRICING", True)
+    monkeypatch.setattr(config, "RELEASE_VERSION", "1.5.0")
+    get = lambda o, d: client.get("/search", params={"origin": o, "dest": d, "date": DEMO})  # noqa: E731
+    with caplog.at_level("ERROR"):
+        bad, bad_reverse = get("SBC", "HYB"), get("HYB", "SBC")
+    assert bad.status_code == 500 and bad_reverse.status_code == 500
+    assert bad.json()["detail"] == "Internal server error"  # no hints in the response
+    # the log carries the genuine traceback and the release, and does not prescribe the fix
+    record = next(r for r in caplog.records if "express_surge_pricing" in r.getMessage())
+    assert "release 1.5.0" in record.getMessage() and record.exc_info and record.exc_info[0] is ZeroDivisionError
+    assert "rollback" not in record.getMessage().lower()
+    for origin, dest in (("SBC", "NDLS"), ("NDLS", "HYB"), ("SBC", "JP"), ("MMCT", "PUNE")):  # everything else still works
+        assert get(origin, dest).status_code == 200, (origin, dest)
+    assert client.post("/match", json={"user_id": "u1", "origin": "SBC", "dest": "HYB", "date": DEMO,
+                                       "window_start": "18:00", "window_end": "22:00"}).status_code == 200
+
+
+def test_every_response_names_the_release(client, monkeypatch):
+    monkeypatch.setattr(config, "RELEASE_VERSION", "1.4.0")
+    r = client.get("/healthz")
+    assert r.headers["X-Release"] == "1.4.0" and r.json()["release"] == "1.4.0"
+    assert client.get("/stations").headers["X-Release"] == "1.4.0"
+
+
+def test_load_test_matches_send_no_flagsmith_exposures(client, monkeypatch):
+    import experiment_events
+
+    exposed = []
+    monkeypatch.setattr(experiment_events, "expose", lambda feature, user: exposed.append((feature, user)))
+    body = {"user_id": "sim-loadgen-vu-1", "origin": "SBC", "dest": "HYB", "date": DEMO, "window_start": "18:00", "window_end": "22:00"}
+    assert client.post("/match", json=body, headers={"X-Load-Test": "1"}).status_code == 200
+    assert exposed == []
+    client.post("/match", json={**body, "user_id": "real-1"})
+    assert exposed == [("matching_strategy", "real-1")]

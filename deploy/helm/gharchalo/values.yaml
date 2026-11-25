@@ -26,6 +26,11 @@ api:
   # PEM text of your network's root CA when a corporate proxy re-signs HTTPS (see
   # deploy/trust-corporate-ca.sh). deploy/k8s-up.sh passes certs/corp-ca.pem automatically.
   caBundle: ""
+  # Which release is deployed. Every change to it is a new Deployment revision whose CHANGE-CAUSE
+  # (kubectl rollout history) reads "<version>: <notes>". deploy/release.sh switches between them.
+  release:
+    version: "1.4.0"
+    notes: "Baseline"
   # Incident knob (Page 5 Incident 2 / NudgeBee rollback demo):
   # Setting enabled=true rolls out a faulty release that returns 500 on SBC <-> HYB.
   expressSurgePricing:

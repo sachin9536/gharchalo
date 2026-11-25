@@ -9,6 +9,12 @@ NAMESPACE="${NAMESPACE:-gharchalo}"
 RELEASE="${RELEASE:-gharchalo}"
 KIND_CLUSTER="${KIND_CLUSTER:-gharchalo}"
 
+# Helm 4 applies changes server-side: after `kubectl rollout undo` (what NudgeBee does), kubectl owns
+# the rolled-back fields and every Helm upgrade fails with a conflict. --force-conflicts lets Helm take
+# them back. Helm 3 has no such flag (and no such conflict), so it is only added on Helm 4.
+HELM_FORCE=()
+if helm version --short 2>/dev/null | grep -q '^v4'; then HELM_FORCE=(--force-conflicts); fi
+
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing tool: $1"; exit 1; }; }
 need docker; need kubectl; need helm
 
@@ -62,7 +68,7 @@ if [[ -f certs/corp-ca.pem ]]; then
 fi
 
 echo "==> Installing chart"
-helm upgrade --install "$RELEASE" deploy/helm/gharchalo -n "$NAMESPACE" --wait --timeout 5m \
+helm upgrade --install "$RELEASE" deploy/helm/gharchalo -n "$NAMESPACE" --wait --timeout 5m ${HELM_FORCE[@]+"${HELM_FORCE[@]}"} \
   ${extra[@]+"${extra[@]}"} "$@"
 
 # The image tag stays "local", so restart to pick up freshly built images.

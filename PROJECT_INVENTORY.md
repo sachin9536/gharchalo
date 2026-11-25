@@ -108,6 +108,9 @@ settings `FLAGSMITH_SERVER_KEY`, `FLAGSMITH_API_URL`, `FLAGSMITH_REFRESH_SECONDS
 | Healthy baseline under load | ✅ 1,987/1,987 OK at 40 req/s, p50 3–6 ms (voice stub adds 0.8 s by design) | |
 | Memory incident (leaky release + 128Mi) | 🟡 built and switched on; the crash under load not yet observed end to end | `deploy/incidents/incident.sh oom` / `fix`, planted fault `FAULT_UNBOUNDED_SEARCH_LOG` |
 | DB-pool incident | 🟡 knob exists; queries are too fast for 2 connections to exhaust at demo load | `incident.sh db-pool` |
+| **Bad release 1.5.0 + rollback** | ✅ verified end to end: 500s only on Bengaluru ↔ Hyderabad, genuine traceback tagged with the release, kubectl and Helm rollbacks, Helm reconcile | `deploy/release.sh`, `api/surge_pricing.py` (Bhavesh's design, hardened) |
+| Continuous k6 load generator | ✅ in the chart (`loadgen.enabled`, on by default) | `deploy/helm/gharchalo/templates/loadgen.yaml` (Bhavesh) |
+| 5xx alert → NudgeBee | 🟡 rule and webhook ready; needs kube-prometheus-stack (on Bhavesh's cluster only) | `deploy/nudgebee-alerts.yaml` (Bhavesh) |
 | NudgeBee RCA captured | ⏳ | Ask NuBi in the dashboard once the incident fires |
 | Prometheus / Grafana in the cluster | ⏳ | The NudgeBee install disabled its bundled Prometheus |
 

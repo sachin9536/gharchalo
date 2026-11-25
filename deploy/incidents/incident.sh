@@ -14,6 +14,12 @@ NAMESPACE="${NAMESPACE:-gharchalo}"
 RELEASE="${RELEASE:-gharchalo}"
 CHART=deploy/helm/gharchalo
 
+# Helm 4 applies changes server-side: after `kubectl rollout undo` (what NudgeBee does), kubectl owns
+# the rolled-back fields and every Helm upgrade fails with a conflict. --force-conflicts lets Helm take
+# them back. Helm 3 has no such flag (and no such conflict), so it is only added on Helm 4.
+HELM_FORCE=()
+if helm version --short 2>/dev/null | grep -q '^v4'; then HELM_FORCE=(--force-conflicts); fi
+
 ctx="$(kubectl config current-context)"
 case "$ctx" in
   kind-*|minikube|docker-desktop|orbstack|hackathon) ;;
@@ -22,7 +28,7 @@ esac
 
 upgrade() {
   # --reuse-values keeps everything deploy/k8s-up.sh set (Sarvam secret, CA bundle, ...).
-  helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" --reuse-values "$@" >/dev/null
+  helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" --reuse-values ${HELM_FORCE[@]+"${HELM_FORCE[@]}"} "$@" >/dev/null
   kubectl -n "$NAMESPACE" rollout status deploy/"$RELEASE"-api --timeout=180s
 }
 

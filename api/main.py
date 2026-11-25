@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 import config
 import flags
 import benchmark
+import surge_pricing
 import experiment_events
 import matching
 import metrics
@@ -55,6 +56,13 @@ _search_log: list = []
 
 
 @app.middleware("http")
+async def release_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Release"] = config.RELEASE_VERSION
+    return response
+
+
+@app.middleware("http")
 async def record_metrics(request: Request, call_next):
     start = time.perf_counter()
     status = 500
@@ -90,6 +98,7 @@ def healthz():
         "sarvam_configured": bool(config.SARVAM_API_KEY),
         "flagsmith": flags.status(),
         "express_surge_pricing": config.ENABLE_EXPRESS_SURGE_PRICING,
+        "release": config.RELEASE_VERSION,
     }
 
 
@@ -359,17 +368,17 @@ def _search(session, f, user_id, origin, dest, date, override_km, include_connec
     key = (origin_code, dest_code, date, km, include_connections, allow_connections)
 
     try:
-        if config.ENABLE_EXPRESS_SURGE_PRICING and _is_faulty_route(session, origin_code, dest_code):
-            log.error(
-                "express_surge_pricing v2 failed on %s -> %s: ZeroDivisionError: surge denominator is 0 "
-                "(deployment regression; rollback gharchalo-api to recover)",
-                origin_code,
-                dest_code,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Express surge pricing v2 failed: ZeroDivisionError on corridor SBC<->HYB",
-            )
+        if config.ENABLE_EXPRESS_SURGE_PRICING:
+            o, d = session.get(models.Station, origin_code), session.get(models.Station, dest_code)
+            if o and d:
+                try:
+                    surge_pricing.multiplier(o.city, d.city, demand=len(search_cache))
+                except Exception:
+                    log.exception(
+                        "GET /search %s -> %s failed in express_surge_pricing (release %s)",
+                        origin_code, dest_code, config.RELEASE_VERSION,
+                    )
+                    raise HTTPException(status_code=500, detail="Internal server error") from None
         if flags.route_fault_on() and _is_faulty_route(session, origin_code, dest_code):
             log.error("route search failed: 500 on %s -> %s (feature flag route_fault_sbc_hyb is enabled)", origin_code, dest_code)
             raise HTTPException(status_code=500, detail="Injected test fault (route_fault_sbc_hyb)")
@@ -484,12 +493,16 @@ class AcceptResponse(BaseModel):
 
 
 @app.post("/match", response_model=matching.MatchResponse)
-def match(body: MatchRequest, session: Session = Depends(get_session)):
+def match(
+    body: MatchRequest,
+    session: Session = Depends(get_session),
+    x_load_test: str | None = Header(default=None),
+):
     start = time.perf_counter()
     f = flags.for_user(body.user_id, body.date)
     status = 200
     try:
-        return _match(body, f, session)
+        return _match(body, f, session, load_test=x_load_test == "1")
     except HTTPException as exc:
         status = exc.status_code
         raise
@@ -497,7 +510,7 @@ def match(body: MatchRequest, session: Session = Depends(get_session)):
         metrics.observe_urgency("match", f.urgent, time.perf_counter() - start, status)
 
 
-def _match(body: MatchRequest, f: flags.UserFlags, session: Session) -> matching.MatchResponse:
+def _match(body: MatchRequest, f: flags.UserFlags, session: Session, load_test: bool = False) -> matching.MatchResponse:
     strategy = body.strategy if (body.strategy and config.ALLOW_FLAG_OVERRIDE) else f.matching_strategy
     if f.tatkal_level >= 3:
         # Paused under load: 200 + paused, nothing written (a 503 would inflate the error rate).
@@ -526,7 +539,7 @@ def _match(body: MatchRequest, f: flags.UserFlags, session: Session) -> matching
         raise _db_unavailable(exc) from exc
     metrics.matches_offered.labels(strategy).inc()
     metrics.bump("matches_served")
-    if not (body.strategy and config.ALLOW_FLAG_OVERRIDE):
+    if not load_test and not (body.strategy and config.ALLOW_FLAG_OVERRIDE):
         experiment_events.expose("matching_strategy", body.user_id)
     return matching.MatchResponse(
         match_id=match_id,

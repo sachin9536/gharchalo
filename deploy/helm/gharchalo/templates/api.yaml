@@ -6,6 +6,9 @@ metadata:
   labels:
     {{- include "gharchalo.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
+  annotations:
+    # Copied onto each ReplicaSet, so `kubectl rollout history` names every release.
+    kubernetes.io/change-cause: {{ printf "%s: %s" .Values.api.release.version .Values.api.release.notes | quote }}
 spec:
   replicas: {{ .Values.api.replicas }}
   selector:
@@ -15,6 +18,7 @@ spec:
     metadata:
       labels:
         {{- include "gharchalo.selector" (list . "api") | nindent 8 }}
+        gharchalo.dev/release: {{ .Values.api.release.version | quote }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -54,6 +58,8 @@ spec:
             {{- end }}
             - name: ENABLE_EXPRESS_SURGE_PRICING
               value: {{ .Values.api.expressSurgePricing.enabled | quote }}
+            - name: RELEASE_VERSION
+              value: {{ .Values.api.release.version | quote }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

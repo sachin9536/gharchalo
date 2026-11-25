@@ -79,3 +79,6 @@ SIMULATED_SARVAM_TIMEOUT_SECONDS = float(_get("SIMULATED_SARVAM_TIMEOUT_SECONDS"
 # Intentional buggy release feature (Page 5 Incident 2 / NudgeBee rollback demo).
 # False in healthy baseline; True in the faulty release -> 500s on Bengaluru <-> Hyderabad.
 ENABLE_EXPRESS_SURGE_PRICING = _get("ENABLE_EXPRESS_SURGE_PRICING", "false").lower() in ("1", "true", "yes")
+# Which release this process belongs to (Helm sets it per deployment). Shown in /healthz, an X-Release
+# response header and error logs, so incidents can be tied to a release.
+RELEASE_VERSION = _get("RELEASE_VERSION", "dev")

@@ -1,5 +1,12 @@
 # GharChalo — Handoff Context (for AI / Teammates)
 
+> **Update (Sachin, 25 Nov):** sections B–D below are committed (`8016488`) and were then hardened: the buggy release now
+> fails for real (`api/surge_pricing.py`, genuine traceback, no "rollback" hint in the log), releases carry a version and
+> change-cause, and `deploy/release.sh` switches releases and **reconciles Helm after a kubectl/NudgeBee rollback** (otherwise the
+> next `helm upgrade --reuse-values` ships the bug again). Prefer `deploy/release.sh v2` over `kubectl set env` for the demo.
+> Current state of everything: `CONTEXT.md` §9.1 and `PROJECT_INVENTORY.md`.
+
+
 > **Last updated:** 25 Nov 2026  
 > **Repo root:** `c:\Users\HP\Desktop\BIEC\gharchalo`  
 > **Current branch:** `main` (PR `#1 feature/flagsmith` merged at `7dc425c`, plus uncommitted local changes for the load generator, buggy rollback feature, and alerting manifests)  
