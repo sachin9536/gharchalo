@@ -1,0 +1,47 @@
+# Prometheus alert rule for GharChalo API regressions -> forwarded by Alertmanager to NudgeBee.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gharchalo-api-alerts
+  namespace: nudgebee-agent
+  labels:
+    release: nudgebee-prometheus
+spec:
+  groups:
+    - name: gharchalo.rules
+      interval: 15s
+      rules:
+        - alert: GharChaloHigh5xxErrorRate
+          expr: sum(rate(gharchalo_http_requests_total{status=~"5.."}[1m])) > 0.05
+          for: 15s
+          labels:
+            severity: critical
+            namespace: gharchalo
+            deployment: gharchalo-api
+            service: gharchalo-api
+          annotations:
+            summary: "High 5xx error rate on gharchalo-api in namespace gharchalo"
+            description: "gharchalo-api is returning 5xx errors ({{ $value | printf \"%.2f\" }} req/s). Inspect pod logs and recent deployment rollout history for deployment/gharchalo-api in namespace gharchalo and propose a human-approved rollback if caused by a recent release."
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: nudgebee-webhook
+  namespace: nudgebee-agent
+  labels:
+    release: nudgebee-prometheus
+spec:
+  route:
+    groupBy: ['alertname', 'namespace']
+    groupWait: 10s
+    groupInterval: 30s
+    repeatInterval: 5m
+    receiver: 'nudgebee'
+    matchers:
+      - name: alertname
+        value: GharChaloHigh5xxErrorRate
+  receivers:
+    - name: 'nudgebee'
+      webhookConfigs:
+        - url: 'http://nudgebee-agent-runner.nudgebee-agent.svc/api/alerts'
+          sendResolved: true

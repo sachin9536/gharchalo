@@ -1,0 +1,142 @@
+{{- if .Values.loadgen.enabled }}
+{{- $name := printf "%s-loadgen" (include "gharchalo.fullname" .) }}
+{{- $apiSvc := printf "%s-api" (include "gharchalo.fullname" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-script
+  labels:
+    {{- include "gharchalo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loadgen
+data:
+  script.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+
+    const BASE = __ENV.TARGET_URL || 'http://gharchalo-api:8000';
+    const VUS = parseInt(__ENV.VUS || '5', 10);
+    const SLEEP_S = parseInt(__ENV.SLEEP_MS || '500', 10) / 1000;
+    const URGENT_RATIO = parseFloat(__ENV.URGENT_RATIO || '0.2');
+    const HEAVY_RATIO = parseFloat(__ENV.HEAVY_RATIO || '0.25');
+
+    // Run in 5-minute windows inside the container loop so k6 prints periodic summaries to logs.
+    export const options = {
+      scenarios: {
+        steady: {
+          executor: 'constant-vus',
+          vus: VUS,
+          duration: '5m',
+        },
+      },
+      discardResponseBodies: true,
+    };
+
+    const ROUTES = [
+      { origin: 'SBC', dest: 'HYB' },  // Incident 2 faulty route (forward)
+      { origin: 'HYB', dest: 'SBC' },  // Incident 2 faulty route (reverse)
+      { origin: 'SBC', dest: 'NDLS' }, // healthy control route
+      { origin: 'NDLS', dest: 'HYB' }, // healthy control route
+      { origin: 'SBC', dest: 'JP' },   // no direct service -> triggers multi-leg planner
+    ];
+
+    export default function () {
+      const userId = `loadgen-vu-${__VU}`;
+      const isUrgent = Math.random() < URGENT_RATIO;
+      const date = isUrgent ? '2026-11-27' : '2026-11-30';
+      const tags = { urgent: isUrgent ? 'true' : 'false' };
+      const headers = {
+        'X-User-Id': userId,
+        'X-Load-Test': '1', // CRITICAL: bypasses real Sarvam API & keeps Experiment B logs clean
+      };
+
+      const roll = Math.random();
+
+      if (roll < 0.70) {
+        // 70% GET /search (some heavy multi-leg queries)
+        const heavy = Math.random() < HEAVY_RATIO;
+        const route = heavy ? ROUTES[4] : ROUTES[Math.floor(Math.random() * 4)];
+        const inc = heavy ? 'true' : 'false';
+        const url = `${BASE}/search?origin=${route.origin}&dest=${route.dest}&date=${date}&include_connections=${inc}`;
+        const res = http.get(url, { headers, tags: { ...tags, endpoint: 'search', route: `${route.origin}-${route.dest}` } });
+        check(res, { 'search 200': (r) => r.status === 200 });
+      } else if (roll < 0.90) {
+        // 20% POST /match (writes to Postgres; exercises DB pool and tatkal_level 3 pause)
+        const payload = JSON.stringify({
+          user_id: userId,
+          origin: 'SBC',
+          dest: 'HYB',
+          date,
+          window_start: '18:00',
+          window_end: '22:00',
+        });
+        const res = http.post(`${BASE}/match`, payload, {
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          tags: { ...tags, endpoint: 'match' },
+        });
+        check(res, { 'match 200': (r) => r.status === 200 });
+      } else {
+        // 10% POST /voice (stubbed via X-Load-Test: 1; never calls Sarvam)
+        const res = http.post(
+          `${BASE}/voice`,
+          { file: http.file('stub-audio', 'stub.wav', 'audio/wav') },
+          { headers, tags: { ...tags, endpoint: 'voice' } },
+        );
+        check(res, { 'voice 200/409': (r) => r.status === 200 || r.status === 409 });
+      }
+
+      if (SLEEP_S > 0) {
+        sleep(SLEEP_S);
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gharchalo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loadgen
+spec:
+  replicas: {{ .Values.loadgen.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gharchalo.selector" (list . "loadgen") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gharchalo.selector" (list . "loadgen") | nindent 8 }}
+    spec:
+      containers:
+        - name: k6
+          image: {{ .Values.loadgen.image }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Waiting for API at $TARGET_URL/healthz ..."
+              until wget -qO- "$TARGET_URL/healthz" >/dev/null 2>&1; do sleep 2; done
+              echo "Starting continuous load against $TARGET_URL (VUS=$VUS, SLEEP_MS=$SLEEP_MS)"
+              while true; do
+                k6 run --no-color /scripts/script.js || true
+              done
+          env:
+            - name: TARGET_URL
+              value: "http://{{ $apiSvc }}:8000"
+            - name: VUS
+              value: {{ .Values.loadgen.vus | quote }}
+            - name: SLEEP_MS
+              value: {{ .Values.loadgen.sleepMs | quote }}
+            - name: URGENT_RATIO
+              value: {{ .Values.loadgen.urgentRatio | quote }}
+            - name: HEAVY_RATIO
+              value: {{ .Values.loadgen.heavyRatio | quote }}
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            {{- toYaml .Values.loadgen.resources | nindent 12 }}
+      volumes:
+        - name: script
+          configMap:
+            name: {{ $name }}-script
+{{- end }}

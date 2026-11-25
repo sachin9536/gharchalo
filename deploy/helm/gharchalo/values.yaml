@@ -26,6 +26,10 @@ api:
   # PEM text of your network's root CA when a corporate proxy re-signs HTTPS (see
   # deploy/trust-corporate-ca.sh). deploy/k8s-up.sh passes certs/corp-ca.pem automatically.
   caBundle: ""
+  # Incident knob (Page 5 Incident 2 / NudgeBee rollback demo):
+  # Setting enabled=true rolls out a faulty release that returns 500 on SBC <-> HYB.
+  expressSurgePricing:
+    enabled: false
   # Extra env vars, e.g. [{name: SARVAM_TIMEOUT_SECONDS, value: "60"}]
   extraEnv: []
 
@@ -62,3 +66,22 @@ seed:
   enabled: true
   waitSeconds: 180
   backoffLimit: 6
+
+# Continuous artificial load generator (k6) in the same namespace.
+# Always sends X-Load-Test: 1 so /voice hits the stub and NEVER consumes Sarvam quota.
+# Crank vus up (e.g. --set loadgen.vus=30 --set loadgen.sleepMs=50) to trigger TatkalStorm.
+loadgen:
+  enabled: true
+  image: grafana/k6:0.54.0
+  replicas: 1
+  vus: 5
+  sleepMs: 500
+  urgentRatio: "0.2"
+  heavyRatio: "0.25"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi

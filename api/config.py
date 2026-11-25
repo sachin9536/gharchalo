@@ -75,3 +75,7 @@ DEMO_NOW = _get("DEMO_NOW")
 
 # How long a simulated Sarvam timeout (sarvam_fault_mode=timeout) hangs before failing.
 SIMULATED_SARVAM_TIMEOUT_SECONDS = float(_get("SIMULATED_SARVAM_TIMEOUT_SECONDS", "5"))
+
+# Intentional buggy release feature (Page 5 Incident 2 / NudgeBee rollback demo).
+# False in healthy baseline; True in the faulty release -> 500s on Bengaluru <-> Hyderabad.
+ENABLE_EXPRESS_SURGE_PRICING = _get("ENABLE_EXPRESS_SURGE_PRICING", "false").lower() in ("1", "true", "yes")

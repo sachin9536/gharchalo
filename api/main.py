@@ -85,7 +85,12 @@ class ParseRequest(BaseModel):
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "sarvam_configured": bool(config.SARVAM_API_KEY), "flagsmith": flags.status()}
+    return {
+        "status": "ok",
+        "sarvam_configured": bool(config.SARVAM_API_KEY),
+        "flagsmith": flags.status(),
+        "express_surge_pricing": config.ENABLE_EXPRESS_SURGE_PRICING,
+    }
 
 
 @app.get("/metrics", include_in_schema=False)
@@ -150,11 +155,14 @@ async def _voice_gate() -> None:
         raise HTTPException(status_code=409, detail="Voice search is paused right now. Please type your journey.")
     mode = flags.sarvam_fault_mode()
     if mode == "429":
+        log.error("sarvam upstream error: HTTP 429 rate limited (sarvam_fault_mode=429)")
         raise HTTPException(status_code=503, detail="Sarvam rate limit (429) [simulated by sarvam_fault_mode]")
     if mode == "timeout":
+        log.error("sarvam upstream error: request timed out (sarvam_fault_mode=timeout)")
         await asyncio.sleep(config.SIMULATED_SARVAM_TIMEOUT_SECONDS)
         raise HTTPException(status_code=502, detail="Sarvam request timed out [simulated by sarvam_fault_mode]")
     if mode == "error":
+        log.error("sarvam upstream error: HTTP 500 unavailable (sarvam_fault_mode=error)")
         raise HTTPException(status_code=502, detail="Sarvam returned 500 [simulated by sarvam_fault_mode]")
 
 
@@ -351,7 +359,19 @@ def _search(session, f, user_id, origin, dest, date, override_km, include_connec
     key = (origin_code, dest_code, date, km, include_connections, allow_connections)
 
     try:
+        if config.ENABLE_EXPRESS_SURGE_PRICING and _is_faulty_route(session, origin_code, dest_code):
+            log.error(
+                "express_surge_pricing v2 failed on %s -> %s: ZeroDivisionError: surge denominator is 0 "
+                "(deployment regression; rollback gharchalo-api to recover)",
+                origin_code,
+                dest_code,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Express surge pricing v2 failed: ZeroDivisionError on corridor SBC<->HYB",
+            )
         if flags.route_fault_on() and _is_faulty_route(session, origin_code, dest_code):
+            log.error("route search failed: 500 on %s -> %s (feature flag route_fault_sbc_hyb is enabled)", origin_code, dest_code)
             raise HTTPException(status_code=500, detail="Injected test fault (route_fault_sbc_hyb)")
 
         if level >= 3:

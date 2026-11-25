@@ -1,0 +1,148 @@
+# Standalone manifest for continuous k6 load generation in the `gharchalo` namespace.
+# Apply directly with:   kubectl apply -f deploy/loadgen.yaml
+# Watch live summaries:  kubectl -n gharchalo logs -f deploy/gharchalo-loadgen
+# Trigger TatkalStorm:   kubectl -n gharchalo set env deploy/gharchalo-loadgen VUS=30 SLEEP_MS=50
+# Pause load:            kubectl -n gharchalo scale deploy/gharchalo-loadgen --replicas=0
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gharchalo-loadgen-script
+  namespace: gharchalo
+  labels:
+    app.kubernetes.io/name: gharchalo
+    app.kubernetes.io/component: loadgen
+data:
+  script.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+
+    const BASE = __ENV.TARGET_URL || 'http://gharchalo-api:8000';
+    const VUS = parseInt(__ENV.VUS || '5', 10);
+    const SLEEP_S = parseInt(__ENV.SLEEP_MS || '500', 10) / 1000;
+    const URGENT_RATIO = parseFloat(__ENV.URGENT_RATIO || '0.2');
+    const HEAVY_RATIO = parseFloat(__ENV.HEAVY_RATIO || '0.25');
+
+    export const options = {
+      scenarios: {
+        steady: {
+          executor: 'constant-vus',
+          vus: VUS,
+          duration: '5m',
+        },
+      },
+      discardResponseBodies: true,
+    };
+
+    const ROUTES = [
+      { origin: 'SBC', dest: 'HYB' },  // Incident 2 faulty route (forward)
+      { origin: 'HYB', dest: 'SBC' },  // Incident 2 faulty route (reverse)
+      { origin: 'SBC', dest: 'NDLS' }, // healthy control route
+      { origin: 'NDLS', dest: 'HYB' }, // healthy control route
+      { origin: 'SBC', dest: 'JP' },   // no direct service -> triggers multi-leg planner
+    ];
+
+    export default function () {
+      const userId = `loadgen-vu-${__VU}`;
+      const isUrgent = Math.random() < URGENT_RATIO;
+      const date = isUrgent ? '2026-11-27' : '2026-11-30';
+      const tags = { urgent: isUrgent ? 'true' : 'false' };
+      const headers = {
+        'X-User-Id': userId,
+        'X-Load-Test': '1', // CRITICAL: bypasses real Sarvam API & keeps Experiment B logs clean
+      };
+
+      const roll = Math.random();
+
+      if (roll < 0.70) {
+        const heavy = Math.random() < HEAVY_RATIO;
+        const route = heavy ? ROUTES[4] : ROUTES[Math.floor(Math.random() * 4)];
+        const inc = heavy ? 'true' : 'false';
+        const url = `${BASE}/search?origin=${route.origin}&dest=${route.dest}&date=${date}&include_connections=${inc}`;
+        const res = http.get(url, { headers, tags: { ...tags, endpoint: 'search', route: `${route.origin}-${route.dest}` } });
+        check(res, { 'search 200': (r) => r.status === 200 });
+      } else if (roll < 0.90) {
+        const payload = JSON.stringify({
+          user_id: userId,
+          origin: 'SBC',
+          dest: 'HYB',
+          date,
+          window_start: '18:00',
+          window_end: '22:00',
+        });
+        const res = http.post(`${BASE}/match`, payload, {
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          tags: { ...tags, endpoint: 'match' },
+        });
+        check(res, { 'match 200': (r) => r.status === 200 });
+      } else {
+        const res = http.post(
+          `${BASE}/voice`,
+          { file: http.file('stub-audio', 'stub.wav', 'audio/wav') },
+          { headers, tags: { ...tags, endpoint: 'voice' } },
+        );
+        check(res, { 'voice 200/409': (r) => r.status === 200 || r.status === 409 });
+      }
+
+      if (SLEEP_S > 0) {
+        sleep(SLEEP_S);
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gharchalo-loadgen
+  namespace: gharchalo
+  labels:
+    app.kubernetes.io/name: gharchalo
+    app.kubernetes.io/component: loadgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gharchalo
+      app.kubernetes.io/component: loadgen
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gharchalo
+        app.kubernetes.io/component: loadgen
+    spec:
+      containers:
+        - name: k6
+          image: grafana/k6:0.54.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Waiting for API at $TARGET_URL/healthz ..."
+              until wget -qO- "$TARGET_URL/healthz" >/dev/null 2>&1; do sleep 2; done
+              echo "Starting continuous load against $TARGET_URL (VUS=$VUS, SLEEP_MS=$SLEEP_MS)"
+              while true; do
+                k6 run --no-color /scripts/script.js || true
+              done
+          env:
+            - name: TARGET_URL
+              value: "http://gharchalo-api:8000"
+            - name: VUS
+              value: "5"
+            - name: SLEEP_MS
+              value: "500"
+            - name: URGENT_RATIO
+              value: "0.2"
+            - name: HEAVY_RATIO
+              value: "0.25"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: script
+          configMap:
+            name: gharchalo-loadgen-script

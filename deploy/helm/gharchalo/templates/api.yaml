@@ -52,6 +52,8 @@ spec:
             - name: SARVAM_CA_BUNDLE
               value: /certs/corp-ca.pem
             {{- end }}
+            - name: ENABLE_EXPRESS_SURGE_PRICING
+              value: {{ .Values.api.expressSurgePricing.enabled | quote }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

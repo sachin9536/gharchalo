@@ -1,0 +1,20 @@
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['alertname', 'namespace']
+      group_wait: 10s
+      group_interval: 30s
+      repeat_interval: 5m
+      receiver: 'nudgebee'
+      routes:
+        - matchers:
+            - alertname = "Watchdog"
+          receiver: 'null'
+    receivers:
+      - name: 'null'
+      - name: 'nudgebee'
+        webhook_configs:
+          - url: 'http://nudgebee-agent-runner.nudgebee-agent.svc/api/alerts'
+            send_resolved: true

@@ -1,0 +1,598 @@
+#!/bin/bash
+set -e  # Enable error handling
+
+# Initialize variables with default values
+auth_key=""
+k8s_context=""
+openshift_enable=""
+additional_secret=""
+prometheus_url=""
+namespace="nudgebee-agent"
+agent_name="nudgebee-agent"
+env="prod"
+disable_node_agent=""
+values=""
+alert_manager_url=""
+prometheus_org_id=""
+relay_address=""
+relay_signing_public_key=""
+collector_endpoint=""
+disable_otel=""
+disable_prometheus_stack=""
+storage_class=""
+chart_ref=""
+
+# Help function
+usage() {
+  echo "Usage: $0 [-a <auth_key>] [-k <k8s_context>] [-o <openshift_enable>] [-p <prometheus_url>] [-s <additional_secret>]"
+  echo ""
+  echo "Options:"
+  echo "  -a <auth_key>           Authentication key (required)"
+  echo "  -k <k8s_context>        Kubernetes context"
+  echo "  -o <openshift_enable>   Enable OpenShift support (true/false)"
+  echo "  -p <prometheus_url>     Prometheus URL"
+  echo "  -s <additional_secret>  Additional secret"
+  echo "  -n <namespace>          Namespace"
+  echo "  -z <agent_name>         Agent_name"
+  echo "  -h <help>               Help"
+  echo "  -d <disable_node_agent> Disable node agent (true/false)"
+  echo "  -f <values> values yaml"
+  echo "  -m <alert_manager_url> Alert manager URL"
+  echo "  -r <prometheus-org-id> Prometheus org id"
+  echo "  -w <relay_address>    WebSocket relay address (self-hosted)"
+  echo "  -S <relay_signing_public_key> Relay Ed25519 public key (authorizes UI workload mutations)"
+  echo "  -c <collector_endpoint> Collector endpoint URL (self-hosted)"
+  echo "  -t <disable_otel>     Disable OpenTelemetry Collector & ClickHouse (true/false)"
+  echo "  -g <disable_prometheus_stack> Disable Prometheus stack (true/false)"
+  echo "  -C <storage_class>    StorageClass name for every PVC this script creates"
+  echo "                        (ClickHouse, and Prometheus/Loki when installed here)."
+  echo "                        Defaults to the cluster default StorageClass; required"
+  echo "                        when the cluster has none. A name only, not '-'."
+  echo "  -R <oci_chart_ref>    Install from an OCI registry instead of the Helm repo (Helm 3.8+), e.g. oci://ghcr.io/nudgebee/charts/nudgebee-agent"
+  echo "Example:"
+  echo "  $0 -a my_auth_key -k my_k8s_context -o true -p http://prometheus:9090 -s my_secret -C gp3"
+  exit 1
+}
+
+while getopts ":a:k:o:p:s:n:z:h:e:d:f:m:r:w:S:c:i:x:t:g:C:R:" opt; do
+  case $opt in
+    a)
+      auth_key="$OPTARG"
+      ;;
+    k)
+      k8s_context="$OPTARG"
+      ;;
+    o)
+      openshift_enable="$OPTARG"
+      ;;
+    p)
+      prometheus_url="$OPTARG"
+      ;;
+    s)
+      additional_secret="$OPTARG"
+      ;;
+    n)
+      namespace="$OPTARG"
+      ;;
+    z)
+      agent_name="$OPTARG"
+      ;;
+    d) 
+      disable_node_agent="$OPTARG"
+      ;;
+    f) 
+      values="$OPTARG"
+      ;;
+    m)
+      alert_manager_url="$OPTARG"
+      ;;
+    r)
+      prometheus_org_id="$OPTARG"
+      ;;
+    w)
+      relay_address="$OPTARG"
+      ;;
+    S)
+      relay_signing_public_key="$OPTARG"
+      ;;
+    c)
+      collector_endpoint="$OPTARG"
+      ;;
+    i)
+      # The chart has no single registry setting: each image's registry is part of
+      # its own values key, so -i used to be accepted and silently ignored.
+      echo "Error: -i is not supported. To pull from a private registry, pass a values file with -f that" >&2
+      echo "points every ghcr.io image at it: runner.image.repository, runner.profilerImage," >&2
+      echo "kubewatch.image.repository, nodeAgent.image.repository, opentelemetry-collector.image.repository," >&2
+      echo "and clickhouse.image.registry." >&2
+      echo "List them for your chart version with: helm show values nudgebee-agent/nudgebee-agent | grep ghcr.io" >&2
+      exit 1
+      ;;
+    x)
+      # Accepted and ignored: the agent no longer installs OpenCost, but install
+      # commands generated before that still pass -x true.
+      ;;
+    t)
+      disable_otel="$OPTARG"
+      ;;
+    g)
+      disable_prometheus_stack="$OPTARG"
+      ;;
+    C)
+      storage_class="$OPTARG"
+      ;;
+    R)
+      chart_ref="$OPTARG"
+      ;;
+    h)
+      usage
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      usage
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      usage
+      ;;
+  esac
+done
+
+# Boolean flags take true or false. Anything else used to be read silently as
+# true (-d, -o) or false (-t, -g).
+check_bool_flag() {
+  if [ -n "$2" ] && [ "$2" != "true" ] && [ "$2" != "false" ]; then
+    echo "Error: -$1 takes true or false, got '$2'." >&2
+    exit 1
+  fi
+}
+check_bool_flag d "$disable_node_agent"
+check_bool_flag o "$openshift_enable"
+check_bool_flag t "$disable_otel"
+check_bool_flag g "$disable_prometheus_stack"
+
+# Check if an access key is provided
+if [ -z "$auth_key" ]; then
+  echo "Error: Access key not provided. Please provide an access key using -a <auth_key>."
+  exit 1
+fi
+
+# `-` is the chart's convention for "disable dynamic provisioning, bind a
+# pre-created PV". Only the agent chart understands it: kube-prometheus-stack
+# copies the value straight into the PVC (yielding a StorageClass named "-" that
+# does not exist, so the volume stays Pending forever) and loki-stack renders it
+# unquoted, which is not even valid YAML. Reject it here rather than letting two
+# of the three stacks break in different ways.
+if [ "$storage_class" == "-" ]; then
+  echo "Error: -C takes a StorageClass name; '-' is not supported." >&2
+  echo "       To bind pre-created PVs, install the chart directly with" >&2
+  echo "       --set global.storageClass=- and install the Prometheus/Loki" >&2
+  echo "       stacks yourself." >&2
+  exit 1
+fi
+
+# Log the Kubernetes context that will be used
+if [ -n "$k8s_context" ]; then
+    echo "Using the specified Kubernetes context: $k8s_context"
+    kubectl config use-context "$k8s_context"
+else
+    current_context=$(kubectl config current-context)
+    echo "Using the current Kubernetes context: $current_context"
+fi
+
+# Function to get Prometheus URL
+getPrometheusURL() {
+    local selectors=("$@")
+    for selector in "${selectors[@]}"; do
+        service_info=$(kubectl get svc --all-namespaces -l "$selector" -o custom-columns=NAME:.metadata.name,NAMESPACE:.metadata.namespace,PORT:.spec.ports[0].port --no-headers 2>/dev/null)
+
+        if [ -n "$service_info" ]; then
+            local name=$(echo "$service_info" | awk '{print $1}')
+            local namespace=$(echo "$service_info" | awk '{print $2}')
+            local port=$(echo "$service_info" | awk '{print $3}')
+
+            # Generate and return Prometheus URL
+            local service_url="http://${name}.${namespace}.svc:${port}"
+            echo "$service_url"
+            return
+        fi
+    done
+
+    # If no Prometheus service is found, return an empty string
+    echo ""
+}
+
+# Check Kubernetes node kernel versions
+echo "Checking Kubernetes node kernel versions..."
+NODE_KERNEL_VERSIONS=$(kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.kernelVersion}')
+MIN_KERNEL_VERSION="4.16"
+
+for kernel_version in $NODE_KERNEL_VERSIONS; do
+    # Integer compare in bash: the old `bc` compare passed every node when bc
+    # was missing, and read 4.9 as newer than 4.16.
+    kernel_major=${kernel_version%%.*}
+    kernel_minor=${kernel_version#*.}
+    kernel_minor=${kernel_minor%%[!0-9]*}
+    if ! [[ $kernel_major =~ ^[0-9]+$ && $kernel_minor =~ ^[0-9]+$ ]]; then
+        echo "Warning: could not read kernel version $kernel_version; skipping the check for this node."
+    elif (( kernel_major < 4 || (kernel_major == 4 && kernel_minor < 16) )); then
+        # The node agent is one DaemonSet, so one old node turns it off everywhere.
+        echo "Error: Node with kernel version $kernel_version is less than $MIN_KERNEL_VERSION. Node Agent will not be installed on any node."
+        disable_node_agent="true"
+    else
+        echo "Node kernel version $kernel_version is compatible."
+    fi
+done
+
+# Check if kubectl is installed
+if ! command -v kubectl &> /dev/null; then
+    echo "Error: kubectl is not installed. You can install it by following the instructions at:"
+    echo "https://kubernetes.io/docs/tasks/tools/install-kubectl/"
+    exit 1
+fi
+
+# Check if helm is installed
+if ! command -v helm &> /dev/null; then
+    echo "Error: Helm is not installed. You can install it by following the instructions at:"
+    echo "https://helm.sh/docs/intro/install/"
+    exit 1
+fi
+
+if [ -n "$chart_ref" ]; then
+  if [[ "$chart_ref" != oci://* ]]; then
+    echo "Error: -R expects an oci:// chart reference, got: $chart_ref"
+    exit 1
+  fi
+  helm_version="$(helm version --template '{{.Version}}')"
+  IFS=. read -r helm_major helm_minor _ <<<"${helm_version#v}"
+  if [ "$helm_major" -lt 3 ] || { [ "$helm_major" -eq 3 ] && [ "$helm_minor" -lt 8 ]; }; then
+    echo "Error: OCI charts need Helm 3.8 or newer, found $helm_version. Drop -R to install from the Helm repo."
+    exit 1
+  fi
+fi
+
+# Storage preflight. Every PVC below is provisioned asynchronously, so a
+# nonexistent StorageClass — or none at all — does not fail the install: the
+# volume sits Pending and the pod never starts, with nothing pointing at the
+# cause. Catch both cases here, before anything is installed. One `name=true`
+# line per class, `true` present when either the GA or the legacy beta
+# default-class annotation is set.
+if storage_class_list=$(kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{.metadata.annotations.storageclass\.beta\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null); then
+    storage_class_names=$(printf '%s\n' "$storage_class_list" | cut -d= -f1 | grep -v '^$' || true)
+    default_storage_class=$(printf '%s\n' "$storage_class_list" | grep '=.*true' | head -1 | cut -d= -f1 || true)
+    if [ -n "$storage_class" ]; then
+        if ! printf '%s\n' "$storage_class_names" | grep -Fqx "$storage_class"; then
+            echo "Error: StorageClass '$storage_class' does not exist in this cluster." >&2
+            if [ -n "$storage_class_names" ]; then
+                echo "       Available StorageClasses:" >&2
+                printf '%s\n' "$storage_class_names" | sed 's/^/         /' >&2
+            else
+                echo "       This cluster has no StorageClasses at all." >&2
+            fi
+            exit 1
+        fi
+        echo "Using StorageClass '$storage_class' for the PVCs this script creates."
+    elif [ -n "$default_storage_class" ]; then
+        echo "Using the cluster's default StorageClass '$default_storage_class' for the PVCs this script creates."
+    elif [ "$disable_otel" == "true" ]; then
+        # No ClickHouse PVC in this mode, but Prometheus/Loki may still be installed below.
+        echo "Warning: this cluster has no default StorageClass. If you let this script install"
+        echo "         Prometheus or Loki, their PVCs will stay Pending — re-run with -C <storage_class>."
+    else
+        echo "Error: this cluster has no default StorageClass, so the ClickHouse PVC would stay" >&2
+        echo "       Pending forever. Re-run with -C <storage_class>, or with -t true to" >&2
+        echo "       install without ClickHouse." >&2
+        if [ -n "$storage_class_names" ]; then
+            echo "       StorageClasses in this cluster:" >&2
+            printf '%s\n' "$storage_class_names" | sed 's/^/         /' >&2
+        else
+            echo "       This cluster has no StorageClasses at all." >&2
+        fi
+        exit 1
+    fi
+else
+    # Listing StorageClasses is cluster-scoped and some install credentials cannot
+    # do it. Not a reason to block the install — just say the check was skipped.
+    echo "Warning: could not list StorageClasses (insufficient permissions?), skipping the storage preflight."
+fi
+
+# Check for existing Prometheus (skip if prometheus stack is disabled)
+existingPrometheus=false
+# Set when this script installs kube-prometheus-stack itself, which also brings the
+# static nudgebee-node-agent scrape job from kube-prometheus-stack-values.yaml.
+installed_prometheus_stack=false
+grafana_command=""
+if [ "$disable_prometheus_stack" == "true" ]; then
+    echo "Prometheus stack disabled, skipping Prometheus discovery and installation."
+else
+    if [ -z "$prometheus_url" ]; then
+        prometheus_selectors=(
+                "app=kube-prometheus-stack-prometheus"
+                "app=prometheus,component=server,release!=kubecost"
+                "app=prometheus-server"
+                "app=prometheus-operator-prometheus"
+        )
+        prometheus_url=$(getPrometheusURL "${prometheus_selectors[@]}")
+    fi
+
+    # Check if service_url is empty
+    if [ -z "$prometheus_url" ]; then
+       echo "Prometheus not found..!"
+       read -p "Installing Prometheus using helm, do you want to continue? (yes/no): " install_prometheus
+        if [ "$install_prometheus" == "yes" ]; then
+            helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+            helm repo update
+            # kube-prometheus-stack-values.yaml gives Prometheus a 50Gi
+            # volumeClaimTemplate, so the stack claims a PVC too. --set wins over
+            # -f, so this overrides the class the values file leaves unset (i.e.
+            # the cluster default).
+            prometheus_storage_class_args=()
+            if [ -n "$storage_class" ]; then
+              prometheus_storage_class_args=(--set-string "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName=$storage_class")
+            fi
+            helm upgrade --install nudgebee-prometheus prometheus-community/kube-prometheus-stack \
+                -n $namespace --create-namespace \
+                --set nodeExporter.enabled=true \
+                --set pushgateway.enabled=false \
+                --set alertmanager.enabled=true \
+                --set kubeStateMetrics.enabled=true \
+                --set grafana.enabled=true \
+                -f https://raw.githubusercontent.com/nudgebee/k8s-agent/main/kube-prometheus-stack-values.yaml \
+                "${prometheus_storage_class_args[@]}"
+            prometheus_url="http://nudgebee-prometheus-kube-p-prometheus:9090"
+            installed_prometheus_stack=true
+            grafana_command=" --set runner.grafana.enabled=true --set runner.grafana.url=http://nudgebee-prometheus-grafana.${namespace}.svc --set runner.grafana.username=admin --set runner.grafana.password=admin "
+        else
+            echo "Error: Prometheus installation not requested, so nothing was installed." >&2
+            echo "Re-run with -p <prometheus_url> to use an existing Prometheus, or -g true to install without the Prometheus stack." >&2
+            exit 1
+        fi
+    else
+        existingPrometheus=true
+    fi
+fi
+
+echo "Discovered Prometheus URL: $prometheus_url"
+
+# Labels a PrometheusRule/ServiceMonitor/PodMonitor must carry before this cluster's
+# Prometheus will select it. prometheus-operator only evaluates objects matching the
+# Prometheus CR's ruleSelector; kube-prometheus-stack defaults that to
+# `release: <its own release name>`, which is not this chart's release name. Without
+# these labels the agent's alert rules and ServiceMonitors are accepted by the
+# apiserver, report healthy, and are never evaluated.
+#
+# go-template rather than jq: jq is not a dependency of this script.
+prometheus_selector_args=()
+if [ "$disable_prometheus_stack" != "true" ]; then
+  prom_labels=$(kubectl get prometheuses.monitoring.coreos.com -A \
+    -o go-template='{{range .items}}{{range $k,$v := .spec.ruleSelector.matchLabels}}{{$k}}={{$v}}{{"\n"}}{{end}}{{end}}' \
+    2>/dev/null | sort -u)
+  while IFS= read -r kv; do
+    [ -z "$kv" ] && continue
+    k=${kv%%=*}
+    v=${kv#*=}
+    # Helm --set treats '.' as a path separator, so escape dots inside the label key.
+    k_escaped=$(printf '%s\n' "$k" | sed 's/\./\\./g')
+    prometheus_selector_args+=(--set-string "prometheusStack.selectorLabels.$k_escaped=$v")
+  done <<< "$prom_labels"
+  if [ ${#prometheus_selector_args[@]} -gt 0 ]; then
+    echo "Prometheus rule-selector labels detected: $prom_labels"
+  fi
+fi
+
+# When this script installed kube-prometheus-stack, kube-prometheus-stack-values.yaml
+# brought a static `nudgebee-node-agent` scrape job with it. The chart's PodMonitor
+# covers the same pods, so leaving both on scrapes the node agent twice -- and they
+# disagree on labels (the static job sets honor_labels and rewrites `instance` to the
+# node name), so the result is two series per metric rather than double the samples.
+podmonitor_args=()
+if [ "$installed_prometheus_stack" == "true" ]; then
+  podmonitor_args=(--set "nodeAgent.podmonitor.enabled=false")
+fi
+
+echo "Installing nudgebee agent using helm"
+if [ -z "$chart_ref" ]; then
+  helm repo add nudgebee-agent https://nudgebee.github.io/k8s-agent/
+  helm repo update > /dev/null 2>&1
+  chart_ref="nudgebee-agent/nudgebee-agent"
+fi
+
+# Build the helm command as an array. Each optional flag becomes an
+# (empty or populated) sub-array; bash expands `"${arr[@]}"` correctly
+# even when empty, preserves spaces/quoting in values, and avoids
+# command-injection via eval.
+helm_args=(
+  upgrade --install "$agent_name" "$chart_ref"
+  --namespace "$namespace"
+  --create-namespace
+  --set "runner.nudgebee.auth_secret_key=$auth_key"
+)
+
+if [ -n "$prometheus_url" ]; then
+  helm_args+=(
+    --set "globalConfig.prometheus_url=$prometheus_url"
+  )
+fi
+
+addition_secret_args=()
+if [ -n "$additional_secret" ]; then
+  addition_secret_args=(
+    --set-string "runner.additional_env_froms[0].secretRef.name=$additional_secret"
+    --set-string "runner.additional_env_froms[0].secretRef.optional=true"
+  )
+fi
+
+openshift_enable_args=()
+if [ "$openshift_enable" == "true" ]; then
+  openshift_enable_args=(
+    --set "openshift.enabled=true"
+    --set "openshift.createScc=true"
+    --set "openshift.createPrivilegedScc=true"
+    --set "clickhouse.podSecurityContext.enabled=false"
+    --set "clickhouse.containerSecurityContext.enabled=false"
+  )
+fi
+
+disable_node_agent_args=()
+if [ "$disable_node_agent" == "true" ]; then
+  disable_node_agent_args=(--set "nodeAgent.enabled=false")
+fi
+
+values_args=()
+if [ -n "$values" ]; then
+  values_args=(-f "$values")
+fi
+
+# Note: grafana_command is built earlier in the script as a quoted string;
+# split it into an array safely. It only contains --set key=value pairs
+# with no shell metacharacters in the values (admin/admin defaults).
+grafana_args=()
+if [ -n "$grafana_command" ]; then
+  # shellcheck disable=SC2206  # intentional word-split — known-safe content
+  grafana_args=($grafana_command)
+fi
+
+alert_manager_url_args=()
+if [ -n "$alert_manager_url" ]; then
+  alert_manager_url_args=(--set "globalConfig.alertmanager_url=$alert_manager_url")
+fi
+
+prometheus_org_id_args=()
+if [ -n "$prometheus_org_id" ]; then
+  prometheus_org_id_args=(
+    --set "globalConfig.prometheus_headers=X-Scope-OrgID: $prometheus_org_id"
+    --set "globalConfig.alertmanager_headers=X-Scope-OrgID: $prometheus_org_id"
+  )
+fi
+
+relay_address_args=()
+if [ -n "$relay_address" ]; then
+  relay_address_args=(--set "runner.relay_address=$relay_address")
+fi
+
+relay_signing_public_key_args=()
+if [ -n "$relay_signing_public_key" ]; then
+  # --set-string: the key may contain '=' (base64 padding) or spaces (ssh form),
+  # which plain --set would mis-parse.
+  relay_signing_public_key_args=(--set-string "runner.nudgebee.relay_signing_public_key=$relay_signing_public_key")
+fi
+
+collector_endpoint_args=()
+if [ -n "$collector_endpoint" ]; then
+  collector_endpoint_args=(--set "runner.nudgebee.endpoint=$collector_endpoint")
+fi
+
+disable_otel_args=()
+if [ "$disable_otel" == "true" ]; then
+  disable_otel_args=(
+    --set "opentelemetry-collector.enabled=false"
+    --set "clickhouse.enabled=false"
+  )
+fi
+
+disable_prometheus_stack_args=()
+if [ "$disable_prometheus_stack" == "true" ]; then
+  disable_prometheus_stack_args=(--set "enablePrometheusStack=false")
+else
+  # enablePrometheusStack=true (the chart default) asserts the Prometheus operator's
+  # CRDs exist, so the chart emits ServiceMonitor/PodMonitor/PrometheusRule objects
+  # unconditionally. A Prometheus found above without the operator (e.g. a plain
+  # prometheus-server) has no such CRDs, and the install fails on them. With false,
+  # each object is rendered only where its CRD is registered. Only a definite
+  # NotFound flips it; if the CRDs can't be read (RBAC), keep the default.
+  for crd in servicemonitors podmonitors prometheusrules; do
+    if kubectl get crd "$crd.monitoring.coreos.com" -o name 2>&1 >/dev/null | grep -q "NotFound"; then
+      echo "Prometheus operator CRD $crd.monitoring.coreos.com not found; the chart will skip monitoring CRs this cluster cannot accept."
+      disable_prometheus_stack_args=(--set "enablePrometheusStack=false")
+      break
+    fi
+  done
+fi
+
+# global.storageClass reaches the ClickHouse PVC, the only one the chart creates
+# by default. Left unset, the cluster's default StorageClass applies.
+storage_class_args=()
+if [ -n "$storage_class" ]; then
+  storage_class_args=(--set-string "global.storageClass=$storage_class")
+fi
+
+helm_args+=(
+  "${disable_node_agent_args[@]}"
+  "${openshift_enable_args[@]}"
+  "${addition_secret_args[@]}"
+  "${values_args[@]}"
+  "${grafana_args[@]}"
+  "${alert_manager_url_args[@]}"
+  "${prometheus_org_id_args[@]}"
+  "${relay_address_args[@]}"
+  "${relay_signing_public_key_args[@]}"
+  "${collector_endpoint_args[@]}"
+  "${disable_otel_args[@]}"
+  "${disable_prometheus_stack_args[@]}"
+  "${storage_class_args[@]}"
+  "${prometheus_selector_args[@]}"
+  "${podmonitor_args[@]}"
+)
+
+echo "Running command: helm ${helm_args[*]}"
+helm "${helm_args[@]}"
+
+# Discover Loki as log server if not found, then provide link to nudgebee doc to configure log provider
+loki_selectors=(
+        "app=loki"
+        "app.kubernetes.io/instance=loki"
+)
+
+RED='\033[0;31m'
+NC='\033[0m'
+loki_url=$(getPrometheusURL "${loki_selectors[@]}")
+if [ -z "$loki_url" ]; then
+    echo "Log provider not found..!"
+    read -p "Installing Loki using helm, do you want to continue? (yes/no): " install_loki
+    if [ "$install_loki" == "yes" ]; then
+        # Add Helm installation command here or instructions
+        helm repo add grafana https://grafana.github.io/helm-charts
+        helm repo update
+        loki_storage_class_args=()
+        if [ -n "$storage_class" ]; then
+          loki_storage_class_args=(--set-string "loki.persistence.storageClassName=$storage_class")
+        fi
+        helm upgrade --install nudgebee-loki grafana/loki-stack \
+            -n "$namespace" --create-namespace \
+            --set loki.persistence.enabled=true \
+            --set loki.persistence.size=10Gi \
+            --set promtail.enabled=true \
+            --set loki.isDefault=false \
+            "${loki_storage_class_args[@]}"
+        loki_url="http://nudgebee-loki:3100"
+    else
+        echo "Loki installation not requested. Node Agent will still be installed."
+    fi
+else
+    echo "Please configure NudgeBee to connect to your existing Loki instance by following the instructions at: https://docs.nudgebee.com/docs/installation/agent/connect/logging/"
+fi
+
+# Check for ClickHouse PVC requirements
+if [ -n "$storage_class" ]; then
+    echo "NudgeBee requires PVCs for ClickHouse. They are provisioned from StorageClass '$storage_class'."
+elif [ -n "$default_storage_class" ]; then
+    echo "NudgeBee requires PVCs for ClickHouse. They are provisioned from the cluster's default StorageClass '$default_storage_class'."
+else
+    echo "NudgeBee requires PVCs for ClickHouse. If your environment does not support automatic PVC creation, create them manually or re-run with -C <storage_class>."
+fi
+
+# Check installation status of each component
+echo "Checking installation status..."
+components=("prometheus" "loki" "clickhouse" "$agent_name")
+for component in "${components[@]}"; do
+    if kubectl get pods -n $namespace | grep -q "$component"; then
+        echo "$component installed successfully."
+    else
+        echo "$component installation failed."
+        echo "Possible reasons for failure:"
+        echo "1. Insufficient resources."
+        echo "2. Missing dependencies."
+        echo "3. Configuration errors."
+        echo "Please refer to the NudgeBee documentation for troubleshooting: https://docs.nudgebee.com/docs/installation/agent/installation/"
+    fi
+done
